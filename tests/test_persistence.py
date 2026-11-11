@@ -812,3 +812,23 @@ def test_response_diagnostic_allows_bounded_metrics_without_content():
     for key,value in [('model','secret-api-key'),('reasoning_tokens',True),('output_tokens',-1)]:
         with pytest.raises(ValueError):
             _public_audit_payload('stage_response_diagnostic',{**payload,key:value})
+
+
+def test_audit_token_counts_survive_redaction_but_secrets_do_not():
+    from gaia_agent.persistence import _public_audit_payload
+    event = AuditEvent(
+        sequence=0, event_type="stage_response_diagnostic",
+        timestamp=datetime.now(UTC),
+        payload={"stage": "planner", "phase": "initial", "code": "valid",
+                 "response_status": "completed", "incomplete_reason": "none",
+                 "max_output_tokens": 20000, "output_tokens": 321,
+                 "reasoning_tokens": 123, "api_token": "private",
+                 "nested": {"output_tokens": "secret-value"}},
+    )
+    assert event.payload["max_output_tokens"] == 20000
+    assert event.payload["output_tokens"] == 321
+    assert event.payload["reasoning_tokens"] == 123
+    assert event.payload["api_token"] == "[REDACTED]"
+    assert event.payload["nested"]["output_tokens"] == "[REDACTED]"
+    payload = {k: v for k, v in event.payload.items() if k not in {"api_token", "nested"}}
+    assert _public_audit_payload("stage_response_diagnostic", payload) == payload

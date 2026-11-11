@@ -262,12 +262,16 @@ class TaskPrediction(FrozenModel):
 
 
 _SENSITIVE_KEY_PARTS = ("api_key", "authorization", "credential", "password", "secret", "token")
+_SAFE_TOKEN_COUNTS = frozenset({"max_output_tokens", "output_tokens", "reasoning_tokens"})
 
 
 def _redact_payload(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
-            key: "[REDACTED]" if any(part in str(key).lower() for part in _SENSITIVE_KEY_PARTS)
+            key: "[REDACTED]" if (
+                any(part in str(key).lower() for part in _SENSITIVE_KEY_PARTS)
+                and not (key in _SAFE_TOKEN_COUNTS and type(item) is int and 0 <= item <= 1_000_000)
+            )
             else _redact_payload(item)
             for key, item in value.items()
         }

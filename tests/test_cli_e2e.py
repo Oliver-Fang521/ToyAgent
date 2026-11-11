@@ -293,7 +293,7 @@ class _OfflineProvider:
                     "steps": [{"specialist": "lookup", "instruction": "Use the tool plane"}],
                 }
             )
-        if request.instructions == LookupAgent.instructions:
+        if request.instructions.startswith(LookupAgent.instructions):
             assert executor is not None
             task_id = str(context["task_id"])
             result = await executor.call("web_search", {"query": task_id})
@@ -354,7 +354,7 @@ class _ReliabilityAuditProvider:
                 ],
             }[self._mode]
             return ModelResponse(parsed={"restatement": "Offline reliability route", "steps": steps})
-        if request.instructions == ComputationAgent.instructions:
+        if request.instructions.startswith(ComputationAgent.instructions):
             return ModelResponse(
                 parsed={
                     "specialist": "computation",
