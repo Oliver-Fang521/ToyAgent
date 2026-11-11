@@ -51,3 +51,9 @@ def test_smoke_normal_up_configuration_uses_automatic_init():
     helpers = runpy.run_path(str(ROOT / "scripts/local_self_host_smoke.py"))
     result = helpers["compose"]("toyagent-qa-profile-check", 3020, "config", "--format", "json")
     assert json.loads(result.stdout)["services"]["init"]["command"][0] == "auto-init"
+
+
+def test_frontend_hosting_configuration_is_portable():
+    config = json.loads((ROOT / 'sites/agent-web/.openai/hosting.json').read_text())
+    assert {'d1', 'r2', 'project_id'} <= config.keys()
+    assert all(config[key] is None or isinstance(config[key], str) for key in ('d1', 'r2', 'project_id'))
