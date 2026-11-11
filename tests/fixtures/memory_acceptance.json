@@ -1,0 +1,14 @@
+[
+ {"id":"cross_conversation","expected":"New conversations retrieve the same owner's relevant profile.","forbidden":"Concatenating profile into persistent task.question."},
+ {"id":"owner_isolation","expected":"Bob receives no Alice records.","forbidden":"Decrypting other owners' rows before filtering."},
+ {"id":"provider_isolation","expected":"OpenAI-only facts stay unavailable to DeepSeek until explicitly shared.","forbidden":"Automatic cross-provider copying."},
+ {"id":"edit_priority","expected":"Manual correction survives later automatic candidates.","forbidden":"Stale revisions or extraction overwrite user edits."},
+ {"id":"forget_alias_history","expected":"Explicit permanent forgetting suppresses alias re-insertion and old-history backfill.","forbidden":"Resurrection from a repeated phrase or changed alias."},
+ {"id":"pause_gap","expected":"Pause disables read/write and resume does not backfill its gap.","forbidden":"Discarding saved content merely by pausing."},
+ {"id":"temporary_draft","expected":"Temporary requests read/write nothing; draft mode is retained once.","forbidden":"Claiming temporary mode deletes ordinary chat history."},
+ {"id":"roleplay_injection","expected":"Role-play, quotes and instructions cannot become a user profile.","forbidden":"Web/tool/assistant text being treated as user self-report."},
+ {"id":"credential_sensitive","expected":"Credential and sensitive identity text is rejected before extraction/storage.","forbidden":"Logging or storing passwords, API Keys or diagnoses."},
+ {"id":"delayed_extraction","expected":"Generation changes defeat delayed candidates after a manual mutation.","forbidden":"Old snapshots authorizing subsequent transport calls."},
+ {"id":"failed_usage","expected":"Failed extraction keeps the answer and counts observed partial usage once.","forbidden":"A repaired second paid extraction call."},
+ {"id":"restart_replay","expected":"Stored settings and opaque forgetting barriers survive restart; replays do not extract again.","forbidden":"Paid automatic task resumption after restart."}
+]

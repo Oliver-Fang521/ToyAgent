@@ -38,6 +38,101 @@ from gaia_agent.search import (
 )
 
 
+@pytest.mark.asyncio
+async def test_deepseek_usage_counts_successful_nonempty_search_only(tmp_path):
+    client = MCPToolClient(
+        task_root=tmp_path,
+        config=RunConfig(openai_api_key="synthetic", hf_token=""),
+        runtime_env={"AGENT_TOOL_MODE": "portable", "DEEPSEEK_API_KEY": "synthetic-ds"},
+    )
+
+    class ProtocolClient:
+        async def call_tool(self, *args, **kwargs):
+            return SimpleNamespace(
+                is_error=False,
+                content=[],
+                structured_content={
+                    "answer": "evidence",
+                    "sources": [{"url": "https://example.com"}],
+                },
+                meta={"gaia.trace": {"provider": "deepseek", "attempt_count": 1}},
+            )
+
+    client._client = ProtocolClient()
+    await client.call("web_search", {"query": "q"})
+    assert client.tool_usage == {"search_requests": 1, "fetch_requests": 0}
+
+
+@pytest.mark.asyncio
+async def test_deepseek_fallback_search_is_counted_not_as_fetch(tmp_path):
+    client = MCPToolClient(
+        task_root=tmp_path,
+        config=RunConfig(openai_api_key="synthetic", hf_token=""),
+        runtime_env={"AGENT_TOOL_MODE": "portable", "DEEPSEEK_API_KEY": "synthetic-ds"},
+    )
+
+    class ProtocolClient:
+        async def call_tool(self, *args, **kwargs):
+            return SimpleNamespace(
+                is_error=False,
+                content=[],
+                structured_content={
+                    "fallback": "search",
+                    "answer": "evidence",
+                    "sources": [{"url": "https://example.com"}],
+                },
+                meta={
+                    "gaia.trace": {
+                        "provider": "deepseek",
+                        "fallback_used": True,
+                        "attempt_count": 1,
+                    }
+                },
+            )
+
+    client._client = ProtocolClient()
+    await client.call("read_webpage", {"url": "https://example.com"})
+    assert client.tool_usage == {"search_requests": 1, "fetch_requests": 0}
+
+
+@pytest.mark.asyncio
+async def test_known_other_provider_secrets_block_before_outbound_tool_request(tmp_path):
+    calls = []
+
+    class Backend:
+        provider = "deepseek"
+
+        async def search(self, query):
+            calls.append(query)
+            return {"answer": "public", "sources": []}
+
+        async def read(self, url):
+            calls.append(url)
+            return {"text": "public", "url": url}
+
+    backend = Backend()
+    settings = MCPServerSettings(
+        task_root=tmp_path,
+        attachment_reader=AttachmentReader(tmp_path, set()),
+        web_reader=backend,
+        backend=backend,
+        search_provider=backend,
+        api_key="",
+        hf_token="",
+        deepseek_api_key="synthetic-ds",
+        serper_api_key="other-private-key",
+    )
+    async with Client(build_server(settings)) as client:
+        for tool, args in [
+            ("web_search", {"query": "other-private-key"}),
+            ("read_webpage", {"url": "https://example.com/?key=other-private-key"}),
+        ]:
+            result = await client.call_tool(tool, args)
+            assert result.is_error
+            assert "other-private-key" not in str(result)
+    assert calls == []
+
+
 @pytest.fixture
 def run_config(tmp_path: Path) -> RunConfig:
     return RunConfig(
@@ -160,7 +255,9 @@ async def test_settings_chain_propagates_untyped_openai_implementation_failure(
 
 
 @pytest.mark.asyncio
-async def test_settings_close_owned_search_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_settings_close_owned_search_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("GAIA_TASK_ROOT", str(tmp_path))
     monkeypatch.setenv("GAIA_ATTACHMENTS", "[]")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -896,7 +993,11 @@ async def test_mcp_success_span_records_private_search_routing_metadata(
         client=trace_client,
     )
     trace = observability.start_task(
-        "task-1", level=1, model="test-model", reasoning_effort="max", run_index=0,
+        "task-1",
+        level=1,
+        model="test-model",
+        reasoning_effort="max",
+        run_index=0,
         evaluation_mode="test",
     )
     client = MCPToolClient(
@@ -978,9 +1079,7 @@ async def test_all_search_provider_expiry_is_typed_across_real_mcp_client_bounda
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "invalid_provider", ["https://private.test/provider", ["serper"]]
-)
+@pytest.mark.parametrize("invalid_provider", ["https://private.test/provider", ["serper"]])
 async def test_mcp_malformed_failure_metadata_fails_closed_without_raw_text(
     tmp_path: Path, run_config: RunConfig, invalid_provider: Any
 ) -> None:
@@ -1692,9 +1791,7 @@ async def test_http_reader_validates_redirect_dns_before_next_request(
     monkeypatch.setattr(socket, "getaddrinfo", resolve_by_host)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError, match="public"):
-            await HTTPWebReader(client=client, timeout_seconds=1).read(
-                "https://public.test/start"
-            )
+            await HTTPWebReader(client=client, timeout_seconds=1).read("https://public.test/start")
 
     assert emitted_hosts == ["public.test"]
 
@@ -1734,9 +1831,7 @@ async def test_http_reader_falls_back_across_validated_public_addresses(
 ) -> None:
     attempts: list[str] = []
 
-    def dual_stack_dns(
-        host: str, port: int, *args: Any, **kwargs: Any
-    ) -> list[tuple[Any, ...]]:
+    def dual_stack_dns(host: str, port: int, *args: Any, **kwargs: Any) -> list[tuple[Any, ...]]:
         return [
             (
                 socket.AF_INET6,
@@ -2061,9 +2156,7 @@ async def test_safe_web_bound_is_rechecked_after_redaction_expands_payload(
             return mcp_server._with_response_usage(
                 {
                     "answer": secret * 4_000,
-                    "sources": [
-                        {"url": "https://source.example", "title": secret * 100}
-                    ],
+                    "sources": [{"url": "https://source.example", "title": secret * 100}],
                 },
                 response,
             )
@@ -2569,6 +2662,28 @@ async def test_code_interpreter_uses_only_registered_files_and_caches_uploads(
     assert second["output_text"] == "42"
     with pytest.raises(ValueError, match="not registered"):
         await backend.execute_python("steal", ["private.csv"])
+
+
+def test_docx_attachment_extracts_paragraphs_and_table_text(tmp_path: Path) -> None:
+    import zipfile
+
+    path = tmp_path / "example.docx"
+    xml = b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>'
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", xml)
+    result = AttachmentReader(tmp_path, {path}).read(str(path))
+    assert result["kind"] == "docx"
+    assert result["text"] == "Hello\nCell"
+
+
+def test_docx_attachment_rejects_xml_entity_declarations(tmp_path: Path) -> None:
+    import zipfile
+
+    path = tmp_path / "unsafe.docx"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", '<!DOCTYPE x [<!ENTITY e "bad">]><x>&e;</x>')
+    with pytest.raises(ValueError):
+        AttachmentReader(tmp_path, {path}).read(str(path))
 
 
 def test_attachment_reader_extracts_json_and_returns_media_metadata(tmp_path: Path) -> None:

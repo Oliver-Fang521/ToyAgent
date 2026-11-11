@@ -34,6 +34,34 @@ def test_openai_provider_declares_native_vision_support() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_omitted_for_nonreasoning_model(fake_responses_client):
+    fake_responses_client.queue_text('{"answer":"a"}')
+    request = model_request().model_copy(update={"reasoning_effort": None})
+    await OpenAIProvider(fake_responses_client, "gpt-4.1").complete(request)
+    assert "reasoning" not in fake_responses_client.requests[0]
+
+
+@pytest.mark.asyncio
+async def test_deepseek_responses_forwards_canonical_effort(fake_responses_client):
+    from gaia_agent.providers.deepseek_responses import DeepSeekResponsesProvider
+
+    fake_responses_client.queue_text('{"answer":"a"}')
+    request = model_request().model_copy(update={"reasoning_effort": "max"})
+    await DeepSeekResponsesProvider(fake_responses_client, "deepseek-flash").complete(request)
+    assert fake_responses_client.requests[0]["reasoning"] == {"effort": "max"}
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_preserves_incomplete_reason(fake_responses_client):
+    raw = _response("incomplete", []).model_dump()
+    raw.update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
+    fake_responses_client.queued.append(Response.model_validate(raw))
+    result = await OpenAIProvider(fake_responses_client, "test-model").complete(model_request())
+    assert result.response_status == "incomplete"
+    assert result.incomplete_reason == "max_output_tokens"
+
+
+@pytest.mark.asyncio
 async def test_evidence_linker_schema_uses_openai_strict_supported_subset(
     fake_responses_client,
 ) -> None:
@@ -317,6 +345,8 @@ async def test_openai_provider_executes_function_call_and_continues(
     assert fake_responses_client.requests[1]["previous_response_id"] == "resp-1"
     assert fake_responses_client.requests[1]["instructions"] == "answer with JSON"
     assert response.parsed == {"answer": "42"}
+    assert len(response.call_stats) == 2
+    assert all(item.response_status == "completed" for item in response.call_stats)
     assert response.tool_events[0].model_dump() == {
         "call_id": "call-1",
         "name": "execute_python",
@@ -390,7 +420,9 @@ async def test_openai_provider_records_safe_generation_retry_metadata() -> None:
     client = FakeResponsesClient()
     client.queued.extend(
         [
-            APIConnectionError(request=httpx.Request("POST", "https://api.openai.com/v1/responses")),
+            APIConnectionError(
+                request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+            ),
             _response("resp-retry-metadata", []),
         ]
     )
@@ -443,6 +475,8 @@ async def test_openai_provider_records_safe_generation_retry_metadata() -> None:
         "retry_category": "APIConnectionError",
         "retry_decision": "recovered",
     }
+
+
 @pytest.mark.asyncio
 async def test_openai_provider_stateless_loop_resends_full_history_without_previous_id(
     fake_responses_client: FakeResponsesClient,
@@ -603,22 +637,18 @@ async def test_unicode_web_output_stays_bounded_through_server_and_provider(
             "additionalProperties": False,
         },
     )
-    fake_responses_client.queue_function_call(
-        "web_search", '{"query":"unicode"}', "call-unicode"
-    )
+    fake_responses_client.queue_function_call("web_search", '{"query":"unicode"}', "call-unicode")
     fake_responses_client.queue_text('{"answer":"done"}')
     executor = PoppingExecutor()
 
-    response = await OpenAIProvider(
-        fake_responses_client, "gpt-5.6-sol"
-    ).complete(
+    response = await OpenAIProvider(fake_responses_client, "gpt-5.6-sol").complete(
         model_request(allowed_tools=(web_tool,), max_tool_calls=1),
         executor,
     )
 
-    server_bytes = json.dumps(
-        public_result, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
+    server_bytes = json.dumps(public_result, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     wire_output = fake_responses_client.requests[1]["input"][0]["output"]
     assert len(server_bytes) <= 16 * 1024
     assert len(wire_output.encode("utf-8")) <= 16 * 1024
@@ -648,9 +678,7 @@ async def test_openai_provider_recovers_from_tool_failure_without_leaking_messag
     fake_responses_client: FakeResponsesClient,
 ) -> None:
     fake_responses_client.queue_function_call("execute_python", '{"code":"bad"}', "call-1")
-    fake_responses_client.queue_function_call(
-        "web_search", '{"query":"safe fallback"}', "call-2"
-    )
+    fake_responses_client.queue_function_call("web_search", '{"query":"safe fallback"}', "call-2")
     fake_responses_client.queue_text('{"answer":"recovered"}')
     web_tool = ToolSpec(
         name="web_search",
@@ -685,9 +713,9 @@ async def test_openai_provider_recovers_from_tool_failure_without_leaking_messag
         max_tool_calls=2,
     )
 
-    response = await OpenAIProvider(
-        fake_responses_client, "gpt-5.6-sol"
-    ).complete(request, executor)
+    response = await OpenAIProvider(fake_responses_client, "gpt-5.6-sol").complete(
+        request, executor
+    )
 
     assert response.parsed == {"answer": "recovered"}
     assert executor.calls == [
@@ -1091,9 +1119,7 @@ def _status_error(error_type: type[Exception], status_code: int) -> Exception:
 )
 async def test_openai_provider_retries_transient_failures_once(transient_error: Exception) -> None:
     client = FakeResponsesClient()
-    client.queued.extend(
-        [transient_error, _response("resp-retry", [], usage=_usage(4, 2, 1))]
-    )
+    client.queued.extend([transient_error, _response("resp-retry", [], usage=_usage(4, 2, 1))])
     observed_usage: list[Usage] = []
 
     await OpenAIProvider(client, "gpt-5.6-sol").complete(
@@ -1111,7 +1137,9 @@ async def test_openai_provider_retries_initial_connection_error_in_place() -> No
     client = FakeResponsesClient()
     client.queued.extend(
         [
-            APIConnectionError(request=httpx.Request("POST", "https://api.openai.com/v1/responses")),
+            APIConnectionError(
+                request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+            ),
             _response("resp-retry", []),
         ]
     )
@@ -1138,9 +1166,7 @@ async def test_openai_provider_raises_typed_safe_cause_after_transient_attempts_
 
     client = FakeResponsesClient()
     client.queued.extend(
-        APIConnectionError(
-            request=httpx.Request("POST", "https://api.openai.com/v1/responses")
-        )
+        APIConnectionError(request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
         for _ in range(4)
     )
     delays: list[float] = []

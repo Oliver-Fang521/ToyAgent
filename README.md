@@ -32,6 +32,29 @@ not a claim about the full 165-question GAIA validation leaderboard.
 - Optional Langfuse tracing with operational summaries and usage data, while deliberately omitting
   sensitive task content and chain-of-thought.
 
+## Interactive web application
+
+For a standalone, single-user installation without Sites sign-in, see
+[local Docker Compose setup](docs/local-self-hosting.md): start the containers, then configure your own provider Key in the browser. This mode is loopback-only.
+
+The local web UI adds visitor-owned **OpenAI and DeepSeek** credentials, explicit model selection,
+model-driven direct/research/clarify routing, file uploads, progress/error stages and inspectable
+sources. Missing login or the selected provider's Key guides users to the right setup screen;
+returning never automatically submits a paid request. Provider changes start a separate conversation.
+
+The first bounded product smoke run completed **6/6 synthetic tasks**: translation, same-conversation
+rewrite, and registered TXT + official webpage research for each provider. This is **not GAIA** or
+a claim that all 15 product cases were live-tested. DeepSeek portable tools do not support hosted
+Python/audio; unsupported operations fail explicitly instead of silently using OpenAI.
+
+See the [verification report](docs/superpowers/reports/2026-10-18-provider-onboarding-verification.md)
+and [runtime/privacy/release requirements](docs/web-deployment.md). Public deployment still requires
+independent security review, real hosted authentication and verified retention/deletion behavior.
+
+### Account memory
+
+ToyAgent can remember user preferences and project context across conversations. Users can inspect, edit, delete, pause, or permanently forget memories. The active model can search and read relevant memories as needed, while background jobs maintain summaries. Memory use may incur model charges. Local data and encryption keys remain in Docker volumes; keep both when backing up.
+
 ## Architecture
 
 ```mermaid
@@ -117,6 +140,12 @@ Each vote has immutable Planner, Specialist, Critic, and global deadlines. Tool 
 both globally and by stage. Recoverable provider failures use bounded retry/backoff; hosted search
 can fall back to configured providers behind a circuit breaker. Structured stage output gets one
 tool-free local repair instead of launching an unbounded second research path.
+
+Local repair retains a bounded selection of successful research excerpts and safe source URLs.
+Repair calls use low reasoning effort so the response budget can produce the structured result.
+Specialist audit events and trace summaries record only allowlisted validation codes, initial/repair
+outcomes, response status, and incomplete reasons such as `max_output_tokens`; research content
+remains private.
 
 After stable graph transitions, private research state is written to an authenticated sibling
 checkpoint directory. `--resume` validates the persisted run configuration, restores only trusted
@@ -233,11 +262,11 @@ GAIA_MAX_STEPS=1 uv run gaia-agent evaluate \
 uv run gaia-agent verify-results results/smoke-3
 ```
 
-Reproduce the configuration used by the published best 15-task run:
+Run the current `gpt-6.1-sol` / `low` configuration on the same deterministic 15-task sample:
 
 ```console
-GAIA_MODEL=gpt-5.6-luna \
-GAIA_REASONING_EFFORT=max \
+GAIA_MODEL=gpt-6.1-sol \
+GAIA_REASONING_EFFORT=low \
 GAIA_QUALITY_POLICY=benchmark \
 GAIA_PROVIDER_MAX_ATTEMPTS=3 \
 uv run gaia-agent evaluate \
@@ -252,13 +281,13 @@ uv run gaia-agent evaluate \
   --critic-timeout-seconds 60 \
   --specialist-max-tool-calls 18 \
   --critic-max-tool-calls 6 \
-  --output-dir results/gaia-15-seed42
+  --output-dir results/gaia-sol-low-seed42
 
-uv run gaia-agent verify-results results/gaia-15-seed42
+uv run gaia-agent verify-results results/gaia-sol-low-seed42
 ```
 
-The fixed configuration reproduces the evaluation protocol and task selection, not a guaranteed
-score: hosted search results and model outputs can change between runs.
+The published 7/15 result remains a historical Luna/max run. The current Sol/low configuration
+has not been benchmarked yet. Hosted search results and model outputs can change between runs.
 
 Resume an interrupted run by repeating the same command and output directory with `--resume`.
 Behavior-defining configuration must match the stored manifest.
@@ -269,8 +298,8 @@ CLI options override `GAIA_*` environment variables, which override built-in def
 
 | Setting | Default | Purpose |
 | --- | ---: | --- |
-| `GAIA_MODEL` | `gpt-5.6-luna` | Production model |
-| `GAIA_REASONING_EFFORT` | `max` | Reasoning level |
+| `GAIA_MODEL` | `gpt-6.1-sol` | Production model |
+| `GAIA_REASONING_EFFORT` | `low` | Reasoning level |
 | `GAIA_SAMPLE_SIZE` | `15` | Balanced evaluation size; divisible by 3 |
 | `GAIA_MAX_STEPS` | `8` | Maximum plan steps |
 | `GAIA_MAX_TOOL_CALLS` | `24` | Global logical tool-call budget |
@@ -292,7 +321,7 @@ uv run pytest
 uv run ruff check .
 
 # After running either evaluation command above:
-uv run gaia-agent verify-results results/gaia-15-seed42
+uv run gaia-agent verify-results results/gaia-sol-low-seed42
 ```
 
 The test suite covers agent schemas and permissions, graph transitions, MCP isolation, provider
@@ -310,8 +339,16 @@ trace-driven reliability improvements, and stage-level recovery.
 - GAIA is gated; reproducing the evaluation requires accepting its dataset terms.
 - Hosted tools and model calls can incur API charges.
 - The published score covers only 15 deterministic validation tasks.
-- The production composition is intentionally pinned to the configured Luna/max evaluation path;
+- The production composition is intentionally pinned to the configured Sol/low evaluation path;
   provider-neutral test adapters exist, but different production providers are not benchmark
   equivalent.
+- Audio transcription uses `gpt-4o-mini-transcribe`; GPT-6.1 Sol does not support audio input.
 - The project does not publish GAIA questions, reference answers, task-level predictions, or
   attachments.
+# Account memory
+
+ToyAgent learns durable account background and preferences asynchronously after a successful answer. New conversations retrieve relevant canonical memories rather than replaying all chats. Memory is scoped by account and permitted provider; temporary chats and paused memory do not learn.
+
+Open **My memory** to search, edit or add an arbitrary topic. **Delete** permits learning again from a new message; **Permanently forget** adds a scoped learning barrier until you restore it. Memory does not schedule reminders. Background maintenance has separate usage and may incur model costs; failed or uncertain dispatches are never silently replayed. Retry is explicit and cost-confirmed in the maintenance panel.
+
+See [semantic memory verification](docs/superpowers/reports/2026-10-21-semantic-memory-verification.md) for measured results and deployment scope.

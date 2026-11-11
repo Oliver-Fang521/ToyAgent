@@ -3,6 +3,10 @@ name = "gaia-multi-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+  "cryptography>=46,<51",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.35,<1",
+  "python-multipart>=0.0.20,<1",
   "beautifulsoup4>=4.13,<5",
   "datasets>=4,<5",
   "huggingface-hub>=0.34,<2",
@@ -15,6 +19,8 @@ dependencies = [
   "pydantic>=2.11,<3",
   "pypdf>=6,<7",
   "typer>=0.16,<1",
+  "pypdfium2>=4.30,<6",
+  "pillow>=10,<13",
 ]
 
 [project.optional-dependencies]

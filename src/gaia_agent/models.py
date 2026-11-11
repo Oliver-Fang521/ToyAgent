@@ -107,6 +107,7 @@ class StageCheckpoint(FrozenModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     cursor: StageCursor
+    answer_style: Literal["concise", "general"] = "concise"
     plan: AgentPlan
     evidence: tuple[Evidence, ...]
     evidence_origins: dict[str, int]
@@ -165,12 +166,14 @@ class StageCheckpoint(FrozenModel):
             or origin < 1
             or origin > self.step_count
             or not value.strip()
-            or "\n" in value
+            or len(value) > 16_000
+            or (self.answer_style == "concise" and "\n" in value)
             for origin, value in self.candidate_origins.items()
         ):
             raise ValueError("checkpoint candidate lineage is invalid")
         if self.candidate is not None and (
-            not self.candidate.strip() or "\n" in self.candidate
+            not self.candidate.strip() or len(self.candidate) > 16_000
+            or (self.answer_style == "concise" and "\n" in self.candidate)
         ):
             raise ValueError("checkpoint candidate must use the concise GAIA format")
         if self.cursor == "act" and self.next_step_index >= len(self.plan.steps):
@@ -206,7 +209,8 @@ class StageCheckpoint(FrozenModel):
             if self.decision.verdict == "revise" and not (
                 self.decision.corrected_answer
                 and self.decision.corrected_answer.strip()
-                and "\n" not in self.decision.corrected_answer
+                and len(self.decision.corrected_answer) <= 16_000
+                and (self.answer_style == "general" or "\n" not in self.decision.corrected_answer)
             ):
                 raise ValueError("checkpoint critic revision requires a concise answer")
             if (

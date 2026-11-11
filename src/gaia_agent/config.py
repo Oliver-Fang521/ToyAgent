@@ -13,9 +13,12 @@ class RunConfig(BaseModel):
 
     openai_api_key: SecretStr
     hf_token: SecretStr
-    model: str = "gpt-5.6-luna"
-    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "max"
+    model: str = "gpt-6.1-sol"
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = (
+        "low"
+    )
     quality_policy: Literal["benchmark", "strict"] = "benchmark"
+    answer_style: Literal["concise", "general"] = "concise"
     sample_size: int = 15
     seed: int = 42
     max_steps: int = 8
@@ -90,8 +93,8 @@ class RunConfig(BaseModel):
         values: dict[str, object] = {
             "openai_api_key": os.environ.get("OPENAI_API_KEY"),
             "hf_token": os.environ.get("HF_TOKEN"),
-            "model": os.environ.get("GAIA_MODEL", "gpt-5.6-luna"),
-            "reasoning_effort": os.environ.get("GAIA_REASONING_EFFORT", "max"),
+            "model": os.environ.get("GAIA_MODEL", "gpt-6.1-sol"),
+            "reasoning_effort": os.environ.get("GAIA_REASONING_EFFORT", "low"),
             "quality_policy": os.environ.get("GAIA_QUALITY_POLICY", "benchmark"),
             "sample_size": os.environ.get("GAIA_SAMPLE_SIZE", "15"),
             "seed": os.environ.get("GAIA_SEED", "42"),
@@ -109,12 +112,8 @@ class RunConfig(BaseModel):
             "stage_context_max_bytes": os.environ.get("GAIA_STAGE_CONTEXT_MAX_BYTES", "24576"),
             "search_circuit_cooldown": os.environ.get("GAIA_SEARCH_CIRCUIT_COOLDOWN", "30"),
             "search_timeout_seconds": os.environ.get("GAIA_SEARCH_TIMEOUT_SECONDS", "120"),
-            "langfuse_input_cost_per_million": os.environ.get(
-                "LANGFUSE_INPUT_COST_PER_MILLION"
-            ),
-            "langfuse_output_cost_per_million": os.environ.get(
-                "LANGFUSE_OUTPUT_COST_PER_MILLION"
-            ),
+            "langfuse_input_cost_per_million": os.environ.get("LANGFUSE_INPUT_COST_PER_MILLION"),
+            "langfuse_output_cost_per_million": os.environ.get("LANGFUSE_OUTPUT_COST_PER_MILLION"),
         }
         for field_name, environment_name in (
             ("planner_timeout_seconds", "GAIA_PLANNER_TIMEOUT_SECONDS"),

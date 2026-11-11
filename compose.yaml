@@ -1,0 +1,68 @@
+name: toyagent-local
+services:
+  init:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    user: "0:0"
+    entrypoint: [python, /app/deploy/local_runtime.py]
+    command: [auto-init, --root, /secrets]
+    environment:
+      AGENT_DATA_DIR: /data
+    volumes:
+      - local-secrets:/secrets
+      - local-data:/data
+  backend:
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    user: "10001:10001"
+    environment:
+      AGENT_DATA_DIR: /data
+    volumes:
+      - type: volume
+        source: local-secrets
+        target: /run/toyagent
+        read_only: true
+        volume:
+          subpath: backend
+      - local-data:/data
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+    user: "10001:10001"
+    environment:
+      AGENT_LOCAL_ORIGIN: http://localhost:${TOYAGENT_PORT:-3000}
+    ports:
+      - "127.0.0.1:${TOYAGENT_PORT:-3000}:3000"
+    volumes:
+      - type: volume
+        source: local-secrets
+        target: /run/toyagent
+        read_only: true
+        volume:
+          subpath: frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+volumes:
+  local-secrets:
+  local-data:

@@ -1,0 +1,17 @@
+[
+ {"id":"greeting","input":"你好 / Hello","expected":"Respond in the user's language without claiming research.","capability":"text","forbidden":"Invented research or sources."},
+ {"id":"translation","input":"请翻译成英文：会议改到周五下午三点，请提前五分钟到。","expected":"Friday, 3 PM, five minutes early; no added date.","capability":"text","forbidden":"This Friday or invented calendar date."},
+ {"id":"rewrite","input":"请保留事实，正式改写所提供的通知。","expected":"Formal wording without added facts.","capability":"text","forbidden":"New dates or attendees."},
+ {"id":"follow_up","input":"请将上一条会议通知改写为正式的英文通知，保留时间，不增加日期或其他事实。","expected":"Use bounded same-provider conversation; formal rewrite.","capability":"text","forbidden":"Losing context or forwarding to another provider."},
+ {"id":"clarification","input":"帮我比较这两个。","expected":"Ask what two things are being compared.","capability":"text","forbidden":"Inventing the comparison subjects."},
+ {"id":"concept","input":"解释什么是栈。","expected":"Explain LIFO with a simple example.","capability":"text","forbidden":"Claiming tools were used."},
+ {"id":"sourced_check","input":"根据 https://www.python.org/doc/essays/blurb/ 查证 Python 的定义并提供来源。","expected":"Read the official page and cite relevant evidence.","capability":"read_webpage","forbidden":"Invented URL or unsupported definition."},
+ {"id":"calculation","input":"请用工具验证 420 W，每天 5 小时，30 天发电多少 kWh。","expected":"63 kWh with real supported computation, or explicit unsupported capability.","capability":"hosted_python","forbidden":"Fake tool success."},
+ {"id":"txt","input":"读取附件，报告项目名称，并访问附件中的官方 URL 查证 Python 的定义。提供可检查的来源。","expected":"Project Orion; real file read and official Python source.","capability":"read_attachment+read_webpage","forbidden":"Project name not derived from file, or fake source."},
+ {"id":"csv","input":"Read tiny CSV with values 2 and 3.","expected":"Read registered rows accurately; verified sum if computation supported.","capability":"read_attachment","forbidden":"Invented rows."},
+ {"id":"pdf","input":"Read tiny text PDF; separately try blank/scanned PDF.","expected":"Extract actual text; explain OCR requirement for empty scanned PDF.","capability":"read_attachment","forbidden":"Fabricated scanned text."},
+ {"id":"xlsx","input":"Read tiny workbook containing Project Orion.","expected":"Extract actual sheet/cell values with registered read.","capability":"read_attachment","forbidden":"Invented sheets or cells."},
+ {"id":"authentication_failure","input":"Synthetic invalid model credential.","expected":"Safe model authentication error and matching Key settings action.","capability":"failure_contract","forbidden":"Raw credential or provider body in logs/UI."},
+ {"id":"unsupported_capability","input":"DeepSeek audio or V4 Pro image.","expected":"Fail before model client creation with capability_unavailable.","capability":"gate","forbidden":"Text marker substituted for image or fake transcript."},
+ {"id":"cancel_reopen","input":"Cancel a queued task and reopen history.","expected":"No new paid work; preserved status and immutable model attribution.","capability":"lifecycle","forbidden":"Automatic paid resubmission."}
+]

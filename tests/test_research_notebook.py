@@ -400,6 +400,21 @@ def test_stage_checkpoint_round_trip_is_private_authenticated_and_bounded(
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_legacy_checkpoint_without_answer_style_remains_readable(tmp_path: Path) -> None:
+    from gaia_agent.research_notebook import _integrity_digest
+
+    notebook = ResearchNotebook(tmp_path / "private", "task-1", run_generation="run-1")
+    checkpoint = _stage_checkpoint()
+    notebook.save_stage_checkpoint(checkpoint)
+    path = notebook.root / "task-1" / ".stage-checkpoint.json"
+    value = json.loads(path.read_text())
+    del value["checkpoint"]["answer_style"]
+    body = {key: item for key, item in value.items() if key != "integrity_hmac_sha256"}
+    value["integrity_hmac_sha256"] = _integrity_digest(body, notebook._integrity_key)
+    path.write_text(json.dumps(value))
+    assert notebook.load_stage_checkpoint() == checkpoint
+
+
 def test_stage_checkpoint_preserves_a_validated_critic_decision(tmp_path: Path) -> None:
     notebook = ResearchNotebook(
         tmp_path / "private",

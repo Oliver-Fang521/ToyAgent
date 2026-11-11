@@ -6,7 +6,7 @@ import os
 import re
 import stat
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import TracebackType
@@ -33,9 +33,7 @@ _PUBLIC_TOOLS = frozenset(
 _PUBLIC_TOOL_TRACE_ARGUMENT_KEYS = {
     "web_search": frozenset({"query"}),
     "read_webpage": frozenset({"url"}),
-    "execute_python": frozenset(
-        {"instruction", "code", "paths", "attachment_ids", "file_ids"}
-    ),
+    "execute_python": frozenset({"instruction", "code", "paths", "attachment_ids", "file_ids"}),
     "read_attachment": frozenset({"path"}),
     "transcribe_audio": frozenset({"path"}),
     "submit_answer": frozenset({"answer", "evidence_ids"}),
@@ -87,9 +85,16 @@ _SAFE_FAILURE_CATEGORIES = frozenset(
         "empty_content",
         "policy_rejection",
         "provider_error",
+        "authentication",
+        "balance",
+        "forbidden",
+        "invalid_input",
+        "rate_limit",
+        "upstream",
+        "response_too_large",
     }
 )
-_SAFE_SEARCH_PROVIDERS = frozenset({"openai", "serper", "serpapi"})
+_SAFE_SEARCH_PROVIDERS = frozenset({"openai", "deepseek", "serper", "serpapi"})
 _MAX_TRACE_DECISION_COUNT = 1_000_000
 _TRACE_META_KEY = "gaia.trace"
 
@@ -128,6 +133,7 @@ class MCPToolClient:
         allowed: set[str] | frozenset[str] | None = None,
         attachments: Iterable[Path] = (),
         observability: Observability | None = None,
+        runtime_env: Mapping[str, str] | None = None,
     ) -> None:
         self._task_root = task_root.resolve()
         self._config = config or RunConfig.from_env()
@@ -142,7 +148,9 @@ class MCPToolClient:
         self._usage = Usage()
         self._usage_lock = asyncio.Lock()
         self._call_count = 0
+        self.tool_usage = {"search_requests": 0, "fetch_requests": 0}
         self._observability = observability
+        self._runtime_env = dict(runtime_env) if runtime_env is not None else None
 
     @property
     def is_connected(self) -> bool:
@@ -272,7 +280,9 @@ class MCPToolClient:
         trace_metadata = _safe_mcp_trace_metadata(getattr(result, "meta", None))
         if result.is_error:
             message = "\n".join(
-                content.text for content in result.content if getattr(content, "type", None) == "text"
+                content.text
+                for content in result.content
+                if getattr(content, "type", None) == "text"
             )
             safe = _safe_failure_payload(message)
             if safe is not None:
@@ -306,6 +316,16 @@ class MCPToolClient:
             raise ToolExecutionError(f"tool returned a non-object result: {name}")
         output = dict(output)
         raw_usage = output.pop(HOSTED_USAGE_METADATA_KEY, None)
+        if (
+            trace_metadata.get("provider") == "deepseek"
+            and (
+                name == "web_search"
+                or name == "read_webpage"
+                and output.get("fallback") == "search"
+            )
+            and output.get("sources")
+        ):
+            self.tool_usage["search_requests"] += 1
         if raw_usage is not None:
             usage = _validated_usage(raw_usage)
             async with self._usage_lock:
@@ -408,7 +428,7 @@ class MCPToolClient:
             "GAIA_TASK_ROOT": str(self._task_root),
             "GAIA_ATTACHMENTS": json.dumps([str(path) for path in self._attachments]),
             "GAIA_MODEL": self._config.model,
-            "GAIA_REASONING_EFFORT": self._config.reasoning_effort,
+            "GAIA_REASONING_EFFORT": self._config.reasoning_effort or "",
             "GAIA_TIMEOUT_SECONDS": str(self._config.timeout_seconds),
             "GAIA_SPECIALIST_TIMEOUT_SECONDS": str(self._config.specialist_timeout_seconds),
             "GAIA_PROVIDER_MAX_ATTEMPTS": str(self._config.provider_max_attempts),
@@ -418,6 +438,20 @@ class MCPToolClient:
             "OPENAI_API_KEY": self._config.openai_api_key.get_secret_value(),
             "HF_TOKEN": self._config.hf_token.get_secret_value(),
         }
+        if self._runtime_env is not None:
+            mode = self._runtime_env.get("AGENT_TOOL_MODE")
+            if mode not in {"openai", "portable"}:
+                raise ValueError("capability_unavailable")
+            env.pop("OPENAI_API_KEY", None)
+            env.pop("HF_TOKEN", None)
+            env["AGENT_TOOL_MODE"] = mode
+            names = ("SERPER_API_KEY", "SERPAPI_API_KEY", "DEEPSEEK_API_KEY")
+            if mode == "openai":
+                names += ("OPENAI_API_KEY", "OPENAI_BASE_URL")
+            for name in names:
+                if value := self._runtime_env.get(name):
+                    env[name] = value
+            return env
         if os.environ.get("GAIA_MCP_FAKE_BACKEND") == "1":
             env["GAIA_MCP_FAKE_BACKEND"] = "1"
         if os.environ.get("OPENAI_BASE_URL"):
@@ -428,11 +462,21 @@ class MCPToolClient:
         return env
 
     def _redact(self, message: str) -> str:
-        for secret in (
-            self._config.openai_api_key.get_secret_value(),
-            self._config.hf_token.get_secret_value(),
-            os.environ.get("SERPER_API_KEY", ""),
-            os.environ.get("SERPAPI_API_KEY", ""),
+        for secret in sorted(
+            (
+                self._config.openai_api_key.get_secret_value(),
+                self._config.hf_token.get_secret_value(),
+                (self._runtime_env if self._runtime_env is not None else os.environ).get(
+                    "SERPER_API_KEY", ""
+                ),
+                (self._runtime_env if self._runtime_env is not None else os.environ).get(
+                    "SERPAPI_API_KEY", ""
+                ),
+                (self._runtime_env or {}).get("OPENAI_API_KEY", ""),
+                (self._runtime_env or {}).get("DEEPSEEK_API_KEY", ""),
+            ),
+            key=len,
+            reverse=True,
         ):
             if secret:
                 message = message.replace(secret, "[REDACTED]")
@@ -440,7 +484,12 @@ class MCPToolClient:
 
     def _redact_value(self, value: Any) -> Any:
         if isinstance(value, dict):
-            return {key: self._redact_value(item) for key, item in value.items()}
+            return {
+                self._redact(key)
+                if self._runtime_env is not None and isinstance(key, str)
+                else key: self._redact_value(item)
+                for key, item in value.items()
+            }
         if isinstance(value, list):
             return [self._redact_value(item) for item in value]
         if isinstance(value, str):
@@ -475,7 +524,11 @@ def _safe_failure_payload(message: str) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         return None
     required = {"error", "category", "retryable", "provider", "attempt_count"}
-    if not isinstance(value, dict) or not required.issubset(value) or value.get("error") != "tool_failed":
+    if (
+        not isinstance(value, dict)
+        or not required.issubset(value)
+        or value.get("error") != "tool_failed"
+    ):
         return None
     category = value["category"]
     provider = value["provider"]
@@ -489,7 +542,11 @@ def _safe_failure_payload(message: str) -> dict[str, Any] | None:
         and (not isinstance(provider, str) or provider not in _SAFE_SEARCH_PROVIDERS)
         or not _safe_count(attempt_count, minimum=1)
         or http_status is not None
-        and (not isinstance(http_status, int) or isinstance(http_status, bool) or not 100 <= http_status <= 599)
+        and (
+            not isinstance(http_status, int)
+            or isinstance(http_status, bool)
+            or not 100 <= http_status <= 599
+        )
     ):
         return None
     safe = {

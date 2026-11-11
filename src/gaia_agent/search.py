@@ -162,7 +162,7 @@ def _validate_normalized_result(payload: Any, *, provider: str) -> dict[str, Any
             raise SearchProviderError(
                 provider=provider, category="parse_failure", retryable=False
             )
-    if not answer and not sources:
+    if not answer and not sources and provider != "deepseek":
         raise SearchProviderError(provider=provider, category="empty_content", retryable=False)
     return dict(payload)
 
@@ -538,6 +538,8 @@ class SearchProviderChain:
                 if not error.retryable:
                     circuit.failures = 0
                     circuit.open_until = 0.0
+                    if provider.provider == "deepseek" and (error.category in {"invalid_input", "policy_rejection"} or provider_index == len(self._providers) - 1):
+                        raise error
                     break
                 if deadline is not None and self._clock() >= deadline:
                     self._record_transient_failure(circuit)

@@ -1,0 +1,4 @@
+[
+ {"id":"diagnostic_background","input":"我是方林，数学专业，正在学习 Python。我现在开始学习 Rust。","present":["方林","数学","Python","Rust"],"forbidden":["火星总统"],"question":"仅依据账户记忆，我在学习什么？不要推测称呼。","answer_present":["Python","Rust"]},
+ {"id":"diagnostic_full_background","input":"ToyAgent 的发布目标是稳定的跨对话记忆。","present":["方林","数学","Python","Rust","ToyAgent"],"forbidden":["火星总统"],"question":"仅依据账户记忆，我的名字、大学专业、正在学习的编程语言和项目目标分别是什么？","answer_present":["方林","数学","Python","Rust","跨对话记忆"]}
+]

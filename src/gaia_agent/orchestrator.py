@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, Required, TypedDict
+from urllib.parse import urlsplit
 
 from langgraph.graph import END, START, StateGraph
 
@@ -270,9 +271,7 @@ def _ready_for_critic(state: _TaskState) -> bool:
             for origin in computation_origins
             if _numeric_value(state.candidate_origins.get(origin)) == final_value
         }
-        return len(agreeing_origins) >= 2 or (
-            bool(agreeing_origins) and "source" in kinds
-        )
+        return len(agreeing_origins) >= 2 or (bool(agreeing_origins) and "source" in kinds)
     if state.plan is not None and any(
         step.specialist == SpecialistName.LOOKUP for step in state.plan.steps
     ):
@@ -289,8 +288,11 @@ class _BudgetedToolClient:
         audit: Callable[[str, dict[str, Any]], None],
         notebook: ResearchNotebook | None = None,
         clock: Callable[[], float] | None = None,
+        separate_submission_budget: bool = False,
+        progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self._client = client
+        self._progress = progress
         self._max_calls = max_calls
         self._audit = audit
         self._notebook = notebook
@@ -301,10 +303,18 @@ class _BudgetedToolClient:
         self._stage_logical_call_counts: dict[str, int] = defaultdict(int)
         self._scope_tool_names: set[str] = set()
         self._results_by_scope: dict[str, dict[str, _CachedToolResult]] = defaultdict(dict)
+        self._task_search_results: dict[str, dict[str, Any]] = {}
+        self._separate_submission_budget = separate_submission_budget
+        self._submission_used = False
         self.call_count = 0
         self.logical_call_count = 0
         self.executed_call_count = 0
         self.restored_call_count = 0
+
+    def research_evidence_cards(self) -> tuple[dict[str, Any], ...]:
+        if self._notebook is None:
+            return ()
+        return self._notebook.linkable_evidence_cards(max_items=12, max_json_bytes=16_384)
 
     @property
     def tool_specs(self) -> tuple[ToolSpec, ...]:
@@ -336,6 +346,13 @@ class _BudgetedToolClient:
     @property
     def scope_tool_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._scope_tool_names))
+
+    def model_tool_limit(self, requested: int) -> int:
+        if not self._separate_submission_budget or self._stage_budget is None:
+            return requested
+        budget = self._stage_budget
+        return max(0, min(requested, self._max_calls - self.call_count,
+                          budget.max_calls - self.stage_logical_call_count(budget.name)))
 
     def stage_logical_call_count(self, stage: str) -> int:
         return self._stage_logical_call_counts[stage]
@@ -379,13 +396,26 @@ class _BudgetedToolClient:
             sort_keys=True,
             separators=(",", ":"),
         )
-        if self.call_count >= self._max_calls:
+        reserved_submit = (self._separate_submission_budget and self._scope == "submit"
+                           and name == "submit_answer")
+        if reserved_submit and self._submission_used:
+            raise _ToolBudgetExhausted("submission allowance exhausted")
+        if not reserved_submit and self.call_count >= self._max_calls:
+            self._audit("tool_call_failed", {"tool": name, "category": "tool_budget_exhausted"})
             raise _ToolBudgetExhausted("global tool-call budget exhausted")
-        self._check_stage_budget()
+        try:
+            if reserved_submit:
+                self._check_stage_deadline()
+            else:
+                self._check_stage_budget()
+        except StageBudgetExceeded as error:
+            self._audit("tool_call_failed", {"tool": name, "category": "timeout" if error.reason == "time" else "tool_budget_exhausted"})
+            raise
         self._scope_tool_names.add(name)
         cached = self._results_by_scope[self._scope].get(signature)
         if cached is not None:
             if cached.reused:
+                self._audit("tool_call_failed", {"tool": name, "category": "repeated_call"})
                 raise _RepeatedToolCall(f"repeated tool call: {name}")
             cached.reused = True
             self._record_logical_call()
@@ -398,8 +428,28 @@ class _BudgetedToolClient:
                     "result_keys": sorted(cached.result),
                 },
             )
-            return copy.deepcopy(cached.result)
+            result = copy.deepcopy(cached.result)
+            if name in {"web_search", "read_webpage"}:
+                result["_cache"] = {"hit": True, "scope": "task"}
+            return result
+        if name in {"web_search", "read_webpage"} and signature in self._task_search_results:
+            result = copy.deepcopy(self._task_search_results[signature])
+            self._results_by_scope[self._scope][signature] = _CachedToolResult(result=copy.deepcopy(result))
+            self._record_logical_call()
+            self._audit("tool_call_reused", {"tool": name, "call_number": self.call_count,
+                        "argument_keys": sorted(arguments), "result_keys": sorted(result)})
+            result["_cache"] = {"hit": True, "scope": "task"}
+            return result
+        if reserved_submit:
+            self._submission_used = True
         self._record_logical_call()
+        if self._progress is not None and name in {"web_search", "read_webpage"}:
+            try:
+                detail = arguments.get("query", "") if name == "web_search" else (urlsplit(str(arguments.get("url", ""))).hostname or "")
+                if isinstance(detail, str) and detail:
+                    self._progress("research_activity", {"tool": name, "detail": detail})
+            except (ValueError, TypeError):
+                pass
         safe_payload = {
             "tool": name,
             "call_number": self.call_count,
@@ -407,7 +457,9 @@ class _BudgetedToolClient:
         }
         if self._notebook is not None:
             restored = self._notebook.lookup(name, arguments)
-            if restored is not None:
+            if restored is not None and not (
+                name in {"web_search", "read_webpage"} and restored.get("error")
+            ):
                 self._results_by_scope[self._scope][signature] = _CachedToolResult(
                     result=copy.deepcopy(restored)
                 )
@@ -416,7 +468,11 @@ class _BudgetedToolClient:
                     "tool_call_restored",
                     {**safe_payload, "result_keys": sorted(restored)},
                 )
-                return copy.deepcopy(restored)
+                result = copy.deepcopy(restored)
+                if name in {"web_search", "read_webpage"}:
+                    self._task_search_results[signature] = copy.deepcopy(result)
+                    result["_cache"] = {"hit": True, "scope": "task"}
+                return result
         try:
             if self._stage_budget is None or self._stage_budget.deadline is None:
                 ensure_current_invocation_allowed()
@@ -447,12 +503,23 @@ class _BudgetedToolClient:
         except TimeoutError as error:
             assert self._stage_budget is not None
             raise StageBudgetExceeded(self._stage_budget.name, "time") from error
-        except ToolCallError:
+        except ToolCallError as error:
             self._audit(
                 "tool_call_failed",
-                {**safe_payload, "category": "tool_error"},
+                {
+                    **safe_payload,
+                    "category": getattr(error, "category", "tool_error"),
+                    **{
+                        key: getattr(error, key)
+                        for key in ("provider", "http_status")
+                        if getattr(error, key, None) is not None
+                    },
+                },
             )
             raise
+        if name in {"web_search", "read_webpage"} and result.get("error"):
+            self._audit("tool_call_completed", {**safe_payload, "result_keys": sorted(result)})
+            return result
         if self._notebook is not None:
             try:
                 self._notebook.record(name, arguments, result)
@@ -461,11 +528,14 @@ class _BudgetedToolClient:
         self._results_by_scope[self._scope][signature] = _CachedToolResult(
             result=copy.deepcopy(result)
         )
+        if name in {"web_search", "read_webpage"} and not result.get("error"):
+            self._task_search_results[signature] = copy.deepcopy(result)
         self._audit(
             "tool_call_completed",
             {
                 **safe_payload,
                 "result_keys": sorted(result),
+                **getattr(result, "trace_metadata", {}),
             },
         )
         return result
@@ -487,11 +557,7 @@ class _BudgetedToolClient:
 
     def _check_stage_deadline(self) -> None:
         budget = self._stage_budget
-        if (
-            budget is not None
-            and budget.deadline is not None
-            and budget.deadline <= self._now()
-        ):
+        if budget is not None and budget.deadline is not None and budget.deadline <= self._now():
             raise StageBudgetExceeded(budget.name, "time")
 
     def _now(self) -> float:
@@ -510,9 +576,7 @@ class _GraphState(TypedDict, total=False):
     soft_step_failures: int
     decision: CriticDecision
     prediction: TaskPrediction
-    entry_cursor: Literal[
-        "plan", "act", "evidence_repair", "verify", "correct", "submit"
-    ]
+    entry_cursor: Literal["plan", "act", "evidence_repair", "verify", "correct", "submit"]
 
 
 class Orchestrator:
@@ -530,6 +594,9 @@ class Orchestrator:
         notebook: ResearchNotebook | None = None,
         evidence_linker: EvidenceLinker | None = None,
         stage_runtime: VoteStageRuntime | None = None,
+        on_progress: Callable[[str, dict[str, Any]], None] | None = None,
+        enable_draft_stream: bool = False,
+        separate_submission_budget: bool = False,
     ) -> None:
         if config.max_steps < 1:
             raise ValueError("max_steps must be positive")
@@ -556,6 +623,15 @@ class Orchestrator:
         self.tool_call_count = 0
         self._invocation_deadline: InvocationDeadline | None = None
         self._graph = self._build_graph()
+        self._on_progress = on_progress
+        self._enable_draft_stream = enable_draft_stream
+        self._separate_submission_budget = separate_submission_budget
+        self._result_evidence: tuple[Evidence, ...] = ()
+
+    @property
+    def result_evidence(self) -> tuple[Evidence, ...]:
+        """Private evidence for the owner of the most recently completed task."""
+        return self._result_evidence
 
     @property
     def audit_events(self) -> tuple[AuditEvent, ...]:
@@ -574,15 +650,14 @@ class Orchestrator:
         return checkpoint.usage if checkpoint is not None else None
 
     async def run(self, task: GaiaTask) -> TaskPrediction:
+        self._result_evidence = ()
         with invocation_deadline_scope(self._invocation_deadline):
             return await self._run(task)
 
     async def _run(self, task: GaiaTask) -> TaskPrediction:
         loop = asyncio.get_running_loop()
         started = (
-            self._vote_stage_runtime.now()
-            if self._vote_stage_runtime is not None
-            else loop.time()
+            self._vote_stage_runtime.now() if self._vote_stage_runtime is not None else loop.time()
         )
         if self._vote_stage_runtime is None:
             self._vote_stage_runtime = VoteStageRuntime.for_config(
@@ -630,6 +705,8 @@ class Orchestrator:
                             audit=self._audit,
                             notebook=self._notebook,
                             clock=self._now,
+                            separate_submission_budget=self._separate_submission_budget,
+                            progress=self._on_progress,
                         )
                         try:
                             prediction = await self._execute(
@@ -665,6 +742,7 @@ class Orchestrator:
         except asyncio.CancelledError as error:
             cancellation = error
         except ProviderTransientExhaustedError as error:
+            self._audit("provider_retry_exhausted", {"category": error.retry_category, "attempt_count": error.attempt_count})
             category = TerminalErrorCategory.RETRY_EXHAUSTED
             provider_exhaustion = error
         except TimeoutError:
@@ -712,6 +790,7 @@ class Orchestrator:
                 self._refresh_checkpoint_accounting(state, budgeted_tools)
             raise cancellation
         if prediction is not None:
+            self._result_evidence = tuple(state.evidence)
             return prediction.model_copy(
                 update={
                     "duration_seconds": self._now() - started,
@@ -846,13 +925,11 @@ class Orchestrator:
         return max(25, self._config.max_steps + 10)
 
     async def _graph_restore(self, graph_state: _GraphState) -> dict[str, Any]:
-        checkpoint = (
-            self._notebook.load_stage_checkpoint()
-            if self._notebook is not None
-            else None
-        )
+        checkpoint = self._notebook.load_stage_checkpoint() if self._notebook is not None else None
         if checkpoint is None:
             return {"entry_cursor": "plan"}
+        if checkpoint.answer_style != self._config.answer_style:
+            raise ValueError("checkpoint answer style does not match task")
         state = graph_state["runtime"]
         state.plan = checkpoint.plan
         state.evidence = list(checkpoint.evidence)
@@ -917,6 +994,8 @@ class Orchestrator:
                 )
             finally:
                 state.usage = _add_usage(state.usage, self._planner.last_usage)
+                for diagnostic in getattr(self._planner, "last_response_diagnostics", ()):
+                    self._audit("stage_response_diagnostic", {"stage": "planner", **diagnostic})
             if planner_span is not None:
                 specialists = [step.specialist.value for step in plan.steps]
                 planner_span.set_summary(
@@ -927,9 +1006,7 @@ class Orchestrator:
                         "repair_attempted": bool(
                             getattr(self._planner, "last_repair_attempted", False)
                         ),
-                        "fallback_used": bool(
-                            getattr(self._planner, "last_fallback_used", False)
-                        ),
+                        "fallback_used": bool(getattr(self._planner, "last_fallback_used", False)),
                         **self._stage_operational_summary(
                             graph_state["budgets"]["planner"],
                             None,
@@ -979,7 +1056,13 @@ class Orchestrator:
                 budget=graph_state["budgets"]["specialist"],
                 stage_runtime=graph_state["stage_runtime"],
             )
+        except _ToolBudgetExhausted:
+            if await self._finish_from_evidence(graph_state, step_index):
+                return {"runtime": state, "next_step_index": len(state.plan.steps)}
+            raise
         except StageBudgetExceeded as error:
+            if error.reason == "tool_calls" and await self._finish_from_evidence(graph_state, step_index):
+                return {"runtime": state, "next_step_index": len(state.plan.steps)}
             if error.reason != "time" or state.candidate is None:
                 raise
             state.step_count = stable_step_count
@@ -991,6 +1074,8 @@ class Orchestrator:
             )
             return {"runtime": state, "next_step_index": len(state.plan.steps)}
         except StageProtocolError as error:
+            if error.repairable and await self._finish_from_evidence(graph_state, step_index):
+                return {"runtime": state, "next_step_index": len(state.plan.steps)}
             if (
                 not error.repairable
                 or not error.repair_attempted
@@ -1012,6 +1097,38 @@ class Orchestrator:
                 "soft_step_failures": graph_state.get("soft_step_failures", 0) + 1,
             }
         return {"runtime": state, "next_step_index": step_index + 1}
+
+    async def _finish_from_evidence(self, graph_state: _GraphState, step_index: int) -> bool:
+        if not self._separate_submission_budget:
+            return False
+        state = graph_state["runtime"]
+        step = state.plan.steps[step_index]
+        recovered = ()
+        if self._notebook:
+            cards = self._notebook.linkable_evidence_cards(max_items=12, max_json_bytes=16_384)
+            recovered = tuple(item for item in self._notebook.evidence_for_hashes(
+                tuple(card["entry_hash"] for card in cards)
+            ) if hashlib.sha256(item.evidence_id.encode()).digest() not in state.raw_evidence_id_digests)
+        evidence = (*state.evidence, *recovered)
+        if not evidence:
+            return False
+        candidate = state.candidate
+        if not candidate:
+            specialist = self._specialists[step.specialist]
+            summarize = getattr(specialist, "summarize_evidence", None)
+            if summarize is None:
+                return False
+            candidate, usage = await self._run_in_stage(
+                graph_state["budgets"]["specialist"],
+                lambda: summarize(graph_state["task"], evidence), graph_state["stage_runtime"],
+            )
+            state.usage = _add_usage(state.usage, usage)
+        if not candidate:
+            return False
+        self._record_result(state, step, AgentResult(specialist=step.specialist,
+                            evidence=recovered, candidate_answer=candidate))
+        self._audit("evidence_recovery_completed", {"evidence_count": len(evidence)})
+        return True
 
     def _route_after_act(
         self,
@@ -1114,9 +1231,7 @@ class Orchestrator:
             if resolved:
                 if state.step_count < 1:
                     raise ValueError("evidence repair requires a completed specialist step")
-                source_step = state.plan.steps[
-                    min(state.step_count - 1, len(state.plan.steps) - 1)
-                ]
+                source_step = state.plan.steps[min(state.step_count - 1, len(state.plan.steps) - 1)]
                 self._record_result(
                     state,
                     source_step,
@@ -1206,7 +1321,9 @@ class Orchestrator:
             deadline=budget.deadline,
             max_calls=budget.max_calls,
             started_at=now,
-            budget_seconds=(max(0.0, budget.deadline - now) if budget.deadline is not None else 0.0),
+            budget_seconds=(
+                max(0.0, budget.deadline - now) if budget.deadline is not None else 0.0
+            ),
         )
         prediction = await self._run_in_stage(
             budget,
@@ -1235,11 +1352,10 @@ class Orchestrator:
         state = graph_state["runtime"]
         if state.plan is None:
             raise ValueError("stable checkpoint requires a plan")
-        decision = (
-            graph_state.get("decision") if cursor in {"correct", "submit"} else None
-        )
+        decision = graph_state.get("decision") if cursor in {"correct", "submit"} else None
         checkpoint = StageCheckpoint(
             cursor=cursor,
+            answer_style=self._config.answer_style,
             plan=state.plan,
             evidence=tuple(state.evidence),
             evidence_origins=dict(state.evidence_origins),
@@ -1297,11 +1413,7 @@ class Orchestrator:
         state.step_count += 1
         self.step_count = state.step_count
         event_prefix = "correction_act" if correction else "act"
-        scope = (
-            f"correction:{self.correction_count}"
-            if correction
-            else f"act:{state.step_count}"
-        )
+        scope = f"correction:{self.correction_count}" if correction else f"act:{state.step_count}"
         tools.start_scope(
             scope,
             stage=budget.name,
@@ -1329,13 +1441,34 @@ class Orchestrator:
                     lambda: self._stage_operational_summary(budget, tools, stage_started)
                 )
             try:
-                result = await self._run_in_stage(
-                    budget,
-                    lambda: specialist.run(task, step, tuple(state.evidence), tools),
-                    stage_runtime,
-                )
+                from gaia_agent.interactive.streaming import answer_stream
+
+                def emit_draft(text):
+                    if self._on_progress is not None:
+                        self._on_progress("answer_preview", {"text": text})
+
+                with answer_stream(emit_draft if self._on_progress is not None and self._enable_draft_stream else None, mode="candidate"):
+                    result = await self._run_in_stage(
+                        budget,
+                        lambda: specialist.run(task, step, tuple(state.evidence), tools),
+                        stage_runtime,
+                    )
             finally:
                 state.usage = _add_usage(state.usage, specialist.last_usage)
+                for diagnostic in getattr(specialist, "last_response_diagnostics", ()):
+                    self._audit("stage_response_diagnostic", {"stage": "specialist", **diagnostic})
+                if specialist_span is not None:
+                    specialist_span.set_summary(
+                        {
+                            "repair_attempted": bool(
+                                getattr(specialist, "last_repair_attempted", False)
+                            ),
+                            "response_diagnostics": list(
+                                getattr(specialist, "last_response_diagnostics", ())
+                            ),
+                            **self._stage_operational_summary(budget, tools, stage_started),
+                        }
+                    )
             if specialist_span is not None:
                 specialist_span.set_summary(
                     {
@@ -1347,6 +1480,9 @@ class Orchestrator:
                         "candidate_present": result.candidate_answer is not None,
                         "repair_attempted": bool(
                             getattr(specialist, "last_repair_attempted", False)
+                        ),
+                        "response_diagnostics": list(
+                            getattr(specialist, "last_response_diagnostics", ())
                         ),
                         **self._stage_operational_summary(budget, tools, stage_started),
                     }
@@ -1374,8 +1510,7 @@ class Orchestrator:
         if any(not evidence_id.strip() for evidence_id in result_ids):
             raise ValueError("evidence IDs must be non-empty")
         result_digests = [
-            hashlib.sha256(evidence_id.encode("utf-8")).digest()
-            for evidence_id in result_ids
+            hashlib.sha256(evidence_id.encode("utf-8")).digest() for evidence_id in result_ids
         ]
         if len(result_digests) != len(set(result_digests)) or (
             state.raw_evidence_id_digests.intersection(result_digests)
@@ -1395,7 +1530,7 @@ class Orchestrator:
             trusted_ids.append(trusted_id)
         if result.candidate_answer is not None:
             candidate = result.candidate_answer.strip()
-            if not candidate or "\n" in candidate:
+            if not candidate or len(candidate) > 16_000 or (self._config.answer_style == "concise" and "\n" in candidate):
                 raise ValueError("candidate answer must use the concise GAIA format")
             state.candidate = candidate
             state.candidate_origins[state.step_count] = candidate
@@ -1450,6 +1585,8 @@ class Orchestrator:
                 )
             finally:
                 state.usage = _add_usage(state.usage, self._critic.last_usage)
+                for diagnostic in getattr(self._critic, "last_response_diagnostics", ()):
+                    self._audit("stage_response_diagnostic", {"stage": "critic", **diagnostic})
             if critic_span is not None:
                 critic_span.set_summary(
                     {
@@ -1560,7 +1697,7 @@ class Orchestrator:
         )
         if decision.verdict == "revise":
             corrected = (decision.corrected_answer or "").strip()
-            if not corrected or "\n" in corrected:
+            if not corrected or len(corrected) > 16_000 or (self._config.answer_style == "concise" and "\n" in corrected):
                 raise ValueError("critic correction must use the concise GAIA format")
             state.candidate = corrected
         else:
@@ -1639,13 +1776,9 @@ class Orchestrator:
                 for origin in computation_origins
                 if _numeric_value(state.candidate_origins.get(origin)) == final_value
             }
-            return len(agreeing_origins) >= 2 or (
-                bool(agreeing_origins) and "source" in kinds
-            )
+            return len(agreeing_origins) >= 2 or (bool(agreeing_origins) and "source" in kinds)
         assert state.plan is not None
-        is_research = any(
-            step.specialist == SpecialistName.LOOKUP for step in state.plan.steps
-        )
+        is_research = any(step.specialist == SpecialistName.LOOKUP for step in state.plan.steps)
         if is_research:
             return "source" in kinds
         return bool(state.evidence)
@@ -1654,7 +1787,9 @@ class Orchestrator:
         if state.candidate is None:
             return "candidate answer is missing"
         if _numeric_value(state.candidate) is not None:
-            return "numerical answer requires two independent computations or computation plus source"
+            return (
+                "numerical answer requires two independent computations or computation plus source"
+            )
         return "research answer requires source evidence"
 
     async def _submit(
@@ -1731,9 +1866,7 @@ class Orchestrator:
 
     def _stage_budgets(self, started: float) -> dict[str, StageBudget]:
         envelope = (
-            self._vote_stage_runtime.envelope
-            if self._vote_stage_runtime is not None
-            else None
+            self._vote_stage_runtime.envelope if self._vote_stage_runtime is not None else None
         ) or StageDeadlineEnvelope.for_config(self._config, started_at=started)
         return {
             "planner": StageBudget(
@@ -1773,8 +1906,7 @@ class Orchestrator:
         operation: Callable[[], Awaitable[Any]],
         stage_runtime: _StageRuntime | None = None,
         *,
-        telemetry_stage: Literal["planner", "specialist", "critic", "submit"]
-        | None = None,
+        telemetry_stage: Literal["planner", "specialist", "critic", "submit"] | None = None,
     ) -> Any:
         remaining = None
         loop_deadline = None
@@ -1863,6 +1995,11 @@ class Orchestrator:
                 payload=payload,
             )
         )
+        if self._on_progress is not None:
+            try:
+                self._on_progress(event_type, dict(payload))
+            except Exception:  # noqa: BLE001,S110 - never expose private progress errors
+                pass
 
     def _stage_operational_summary(
         self,

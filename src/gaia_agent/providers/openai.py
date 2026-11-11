@@ -12,6 +12,7 @@ from gaia_agent.providers.base import (
     Citation,
     ModelRequest,
     ModelResponse,
+    ModelCallStats,
     SafeToolFailure,
     ToolCallError,
     ToolEvent,
@@ -65,7 +66,7 @@ def _append_tool_turn(
             continue
         reasoning_parts = [
             {"type": "reasoning_text", "text": part.text}
-            for part in item.content
+            for part in (item.content or ())
             if part.type == "reasoning_text"
         ]
         if reasoning_parts:
@@ -104,7 +105,7 @@ class OpenAIProvider:
     def __init__(
         self,
         client: Any,
-        model: str = "gpt-5.6-sol",
+        model: str = "gpt-6.1-sol",
         *,
         use_previous_response_id: bool = True,
         observability: Observability | None = None,
@@ -200,9 +201,10 @@ class OpenAIProvider:
                     "strict": True,
                 }
             },
-            "reasoning": {"effort": request.reasoning_effort},
             "max_output_tokens": request.max_output_tokens,
         }
+        if request.reasoning_effort is not None:
+            common["reasoning"] = {"effort": request.reasoning_effort}
         if request.max_tool_calls > 0:
             common["max_tool_calls"] = request.max_tool_calls
         history: list[dict[str, Any]] = [dict(item) for item in request.input_items]
@@ -275,11 +277,7 @@ class OpenAIProvider:
             tool_call_count += len(calls)
             if not self._use_previous_response_id:
                 _append_tool_turn(history, response, calls, outputs)
-            next_common = (
-                tool_free_common
-                if tool_call_count == request.max_tool_calls
-                else common
-            )
+            next_common = tool_free_common if tool_call_count == request.max_tool_calls else common
             response = await self._continue(
                 previous_response=response,
                 input_items=outputs if self._use_previous_response_id else list(history),
@@ -293,10 +291,24 @@ class OpenAIProvider:
         parsed = None if refused or not output_text else _extract_json_object(output_text)
         if parsed is not None and not isinstance(parsed, dict):
             raise ValueError("structured response must decode to an object")
+        status = getattr(response, "status", "unknown")
+        details = getattr(response, "incomplete_details", None)
+        reason = getattr(details, "reason", None)
         return ModelResponse(
+            response_status=(
+                status if status in {"completed", "incomplete", "failed"} else "unknown"
+            ),
+            incomplete_reason=(
+                reason
+                if reason in {"max_output_tokens", "content_filter"}
+                else "other"
+                if details is not None
+                else "none"
+            ),
             parsed=parsed,
             output_text=output_text,
             usage=_aggregate_usage(responses),
+            call_stats=tuple(_call_stats(item) for item in responses),
             citations=tuple(citations),
             tool_events=tuple(tool_events),
             remote_file_ids=tuple(remote_file_ids),
@@ -317,14 +329,45 @@ class OpenAIProvider:
             )
         return await self._create_with_retry(input=input_items, **common)
 
+    def _prepare_response_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        return kwargs
+
     async def _create_with_retry(self, **kwargs: Any) -> Any:
+        kwargs = self._prepare_response_kwargs(kwargs)
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             try:
                 ensure_current_invocation_allowed()
                 retry_metadata = _CURRENT_RETRY_METADATA.get()
                 if retry_metadata is not None:
                     retry_metadata.attempt_count += 1
-                response = await self._client.responses.create(**kwargs)
+                from gaia_agent.interactive.streaming import (
+                    PartialCandidate,
+                    PartialDecision,
+                    observer,
+                    record_model_text,
+                    stream_mode,
+                )
+
+                emit = observer()
+                if emit is None:
+                    response = await self._client.responses.create(**kwargs)
+                else:
+                    emit("")
+                    parser = PartialCandidate(emit) if stream_mode() == "candidate" else PartialDecision(emit)
+                    stream = await self._client.responses.create(**kwargs, stream=True)
+                    response = None
+                    try:
+                        async for event in stream:
+                            ensure_current_invocation_allowed()
+                            if event.type == "response.output_text.delta":
+                                record_model_text(event.delta)
+                                parser.feed(event.delta)
+                            elif event.type in {"response.completed", "response.failed", "response.incomplete"}:
+                                response = event.response
+                    finally:
+                        await stream.close()
+                    if response is None:
+                        raise RuntimeError("stream_incomplete")
                 retry_metadata = _CURRENT_RETRY_METADATA.get()
                 if retry_metadata is not None and retry_metadata.retry_count:
                     retry_metadata.retry_decision = "recovered"
@@ -372,6 +415,21 @@ def _aggregate_usage(responses: list[Any]) -> Usage:
         output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
         total_tokens=total_tokens,
+    )
+
+
+def _call_stats(response: Any) -> ModelCallStats:
+    status = getattr(response, "status", None)
+    details = getattr(response, "incomplete_details", None)
+    reason = getattr(details, "reason", None)
+    usage = getattr(response, "usage", None)
+    output = getattr(usage, "output_tokens", None)
+    reasoning = getattr(getattr(usage, "output_tokens_details", None), "reasoning_tokens", None)
+    return ModelCallStats(
+        response_status=status if status in {"completed", "incomplete", "failed"} else "unknown",
+        incomplete_reason=reason if reason in {"max_output_tokens", "content_filter"} else "other" if details is not None else "none",
+        output_tokens=output if type(output) is int and 0 <= output <= 10_000_000 else None,
+        reasoning_tokens=reasoning if type(reasoning) is int and 0 <= reasoning <= 10_000_000 else None,
     )
 
 

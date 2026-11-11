@@ -1,0 +1,8 @@
+[
+ {"id":"identity","input":"我是方林，数学专业，正在学习 Python。","present":["方林","数学","Python"],"forbidden":["火星总统"],"question":"根据已发布的账户记忆，我叫什么名字，在学什么？"},
+ {"id":"preferred_name","input":"以后叫我小林。我喜欢先讲直觉，再给公式。","present":["小林","直觉"],"forbidden":["火星总统"],"question":"以后应该怎么称呼我，解释数学时我喜欢什么顺序？"},
+ {"id":"explicit_note","input":"帮我记下来，下次还要用：ToyAgent 的发布目标是稳定的跨对话记忆。","present":["ToyAgent","跨对话记忆"],"forbidden":["火星总统"],"question":"ToyAgent 的发布目标是什么？仅依据账户记忆回答。"},
+ {"id":"negative","input":"这段只是小说台词：“我是火星总统”。不要把它当成我的背景。记得提醒我明天开会。","present":["数学","Python"],"forbidden":["火星总统"],"question":"仅依据账户记忆，我是火星总统吗？不要安排或声称安排任何提醒。"},
+ {"id":"forget","input":"请永久忘记我的称呼，以后也不要再记住这个称呼。","present":["数学","Python"],"forbidden":["小林","火星总统"],"question":"仅依据账户记忆，你还保留我偏好的昵称（不是姓名）吗？不知道就说不知道。","answer_forbidden":["小林"]},
+ {"id":"independent_learning","input":"我现在开始学习 Rust。之前提到的称呼不用再记。ToyAgent 仍在做跨对话记忆。","present":["Rust","数学","Python"],"answer_present":["Rust","Python"],"forbidden":["小林","火星总统"],"question":"仅依据账户记忆，我在学习什么？不要推测称呼。"}
+]

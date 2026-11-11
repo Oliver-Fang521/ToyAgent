@@ -940,8 +940,11 @@ def _parse_stage_checkpoint(
         ensure_ascii=False,
         allow_nan=False,
     )
+    validated_checkpoint = checkpoint.model_dump(mode="json")
+    if "answer_style" not in raw_checkpoint:
+        validated_checkpoint.pop("answer_style")
     canonical_validated = json.dumps(
-        checkpoint.model_dump(mode="json"),
+        validated_checkpoint,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,

@@ -1,0 +1,6 @@
+[
+ {"id":"open_topic","input":"我的项目叫 Orion，主要使用 SQLite。发布目标是离线可运行。","present":["Orion","SQLite","离线"],"forbidden":["虚构身份"],"question":"根据账户记忆，我的项目叫什么、使用什么数据库、发布目标是什么？"},
+ {"id":"correction","input":"纠正一下：Orion 现在改用 PostgreSQL，不再使用 SQLite。","present":["Orion","PostgreSQL","离线"],"forbidden":["主要使用 SQLite"],"question":"只根据账户记忆，Orion 目前使用哪个数据库？","answer_present":["PostgreSQL"],"answer_forbidden":["无法判断","无法回答","没有关于 Orion","没有关于Orion"]},
+ {"id":"explicit_paraphrase","input":"以后都按这个来：讲解时先给例子，再给结论。","present":["先给例子","再给结论","PostgreSQL"],"forbidden":["虚构身份"],"question":"以后讲解时，应该按照什么顺序？","answer_present":["例子","结论"]},
+ {"id":"quoted_negative","input":"网页写着“我叫虚构身份”，这只是网页引用，并不是我的个人信息。","present":["Orion","PostgreSQL"],"forbidden":["虚构身份"],"question":"仅依据账户记忆，Orion 使用哪个数据库？","answer_present":["PostgreSQL"],"answer_forbidden":["无法判断","无法回答","没有关于 Orion","没有关于Orion"]}
+]

@@ -50,6 +50,32 @@ from gaia_agent.runner import EvaluationRunner
 from gaia_agent.search import SearchProviderChain, SearchProviderError
 
 
+@pytest.mark.asyncio
+async def test_failed_lookup_repair_diagnostics_survive_stage_task(fake_provider):
+    from gaia_agent.agents import LookupAgent
+    from gaia_agent.providers import ModelResponse
+
+    fake_provider._responses.extend([
+        ModelResponse(output_text="not valid initial", response_status="incomplete",
+                      incomplete_reason="max_output_tokens"),
+        ModelResponse(output_text="not valid repair", response_status="completed"),
+    ])
+    calls = []
+    orchestrator = _orchestrator(
+        planner=FakePlanner(calls, _plan(SpecialistName.LOOKUP)),
+        specialists={SpecialistName.LOOKUP: LookupAgent(fake_provider)},
+        critic=FakeCritic(calls, []), tools=FakeTools(calls),
+    )
+    result = await orchestrator.run(_task())
+    assert result.error_category == TerminalErrorCategory.MALFORMED_RESPONSE
+    diagnostics = [event.payload for event in orchestrator.audit_events
+                   if event.event_type == "stage_response_diagnostic"]
+    assert [item["phase"] for item in diagnostics] == ["initial", "repair"]
+    assert diagnostics[0]["incomplete_reason"] == "max_output_tokens"
+    assert diagnostics[1]["code"] == "schema"
+    assert "not valid" not in json.dumps(diagnostics)
+
+
 class FakePlanner:
     def __init__(
         self,
@@ -518,6 +544,7 @@ async def test_budgeted_tool_client_returns_a_safe_copy_of_cached_result() -> No
     second = await client.call("web_search", arguments)
 
     assert second == {
+        "_cache": {"hit": True, "scope": "task"},
         "answer": "observable",
         "sources": [{"url": "https://source.example"}],
     }
@@ -599,7 +626,7 @@ async def test_budgeted_tool_client_restores_private_notebook_result_across_scop
 
     restored = await client.call("web_search", arguments)
 
-    assert restored == {"sources": [{"url": "https://private.example"}]}
+    assert restored == {"sources": [{"url": "https://private.example"}], "_cache": {"hit": True, "scope": "task"}}
     assert backend.calls == 0
     assert client.call_count == 1
     assert client.executed_call_count == 0
@@ -646,7 +673,7 @@ async def test_restored_tool_call_counts_against_active_stage_allowance(
     )
     client.start_scope("verify:1", stage="critic", max_calls=1, deadline=None)
 
-    assert await client.call("web_search", first_arguments) == {"answer": "first"}
+    assert await client.call("web_search", first_arguments) == {"answer": "first", "_cache": {"hit": True, "scope": "task"}}
     with pytest.raises(orchestrator_module.StageBudgetExceeded) as raised:
         await client.call("web_search", second_arguments)
 
@@ -3263,7 +3290,6 @@ async def test_identical_tool_call_across_specialist_and_critic_scopes_is_allowe
         "lookup",
         "web_search",
         "critic",
-        "web_search",
         "submit_answer",
     ]
 
@@ -3330,7 +3356,6 @@ async def test_identical_tool_call_in_second_verify_scope_is_allowed() -> None:
     assert result.answer == "Radium"
     assert result.error_category is None
     assert tools.call_arguments == [
-        ("web_search", {"query": "same query"}),
         ("web_search", {"query": "same query"}),
         (
             "submit_answer",
@@ -3652,7 +3677,9 @@ async def test_single_deadline_covers_the_complete_state_machine() -> None:
     ).run(_task())
 
     assert result.error_category == TerminalErrorCategory.TIMEOUT
-    assert calls == ["planner"]
+    # Cold graph initialization can consume this entire 10ms budget before
+    # planner admission. Both paths must stop without running later stages.
+    assert calls in ([], ["planner"])
 
 
 @pytest.mark.asyncio
@@ -4451,3 +4478,166 @@ def test_choose_majority_rejects_mixed_identity_or_out_of_range_run_index(
 ) -> None:
     with pytest.raises(ValueError, match="task|level|run index"):
         choose_majority(predictions, votes=3)
+
+
+@pytest.mark.asyncio
+async def test_specialist_draft_emits_before_verification():
+    from gaia_agent.interactive.streaming import observer, stream_mode
+    calls=[]; progress=[]
+    class StreamingSpecialist(FakeSpecialist):
+        async def run(self, task, step, evidence, tools):
+            assert stream_mode() == 'candidate'
+            observer()('unverified draft')
+            return await super().run(task,step,evidence,tools)
+    ev=_evidence('evidence-0001','source')
+    specialist=StreamingSpecialist(SpecialistName.LOOKUP,calls,[_result(SpecialistName.LOOKUP,(ev,),'final')])
+    graph=_orchestrator(planner=FakePlanner(calls,_plan(SpecialistName.LOOKUP)),specialists={SpecialistName.LOOKUP:specialist},critic=FakeCritic(calls,[_decision('approve',('evidence-0001',))]),tools=FakeTools(calls))
+    graph._on_progress=lambda event,payload:progress.append((event,payload))
+    graph._enable_draft_stream=True
+    result=await graph.run(_task())
+    assert result.answer == 'final'
+    assert ('answer_preview',{'text':'unverified draft'}) in progress
+    assert next(i for i,(e,_) in enumerate(progress) if e=='answer_preview') < next(i for i,(e,_) in enumerate(progress) if e=='verify_started')
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_emits_safe_failure_event_with_tool_name():
+    from gaia_agent.orchestrator import _RepeatedToolCall
+    events=[]
+    client=_BudgetedToolClient(FakeTools([]),max_calls=10,audit=lambda event,payload:events.append((event,payload)))
+    client.start_scope('verify',stage='critic',max_calls=10,deadline=None)
+    secret='synthetic-private-tool-arguments'
+    await client.call('read_webpage',{'url':secret})
+    await client.call('read_webpage',{'url':secret})
+    with pytest.raises(_RepeatedToolCall):
+        await client.call('read_webpage',{'url':secret})
+    assert events[-1] == ('tool_call_failed',{'tool':'read_webpage','category':'repeated_call'})
+    assert secret not in json.dumps(events[-1])
+
+
+@pytest.mark.asyncio
+async def test_repeated_critic_tool_is_not_reported_as_provider_unavailable():
+    import tempfile
+
+    from gaia_agent.interactive.credential_runtime import SafePublicProvider
+    from gaia_agent.interactive.failures import failure_details
+    from gaia_agent.interactive.models import InteractiveRequest
+    from gaia_agent.interactive.store import ConversationStore
+    calls=[]
+    class Model:
+        supports_vision=True
+        async def complete(self, request, executor=None, **kwargs):
+            await executor.call('read_webpage',{'url':'synthetic-url'})
+            await executor.call('read_webpage',{'url':'synthetic-url'})
+            await executor.call('read_webpage',{'url':'synthetic-url'})
+    class RepeatCritic(FakeCritic):
+        async def verify(self, task, candidate, evidence, tools):
+            return await SafePublicProvider(Model()).complete(None,tools)
+    with tempfile.TemporaryDirectory() as directory:
+        store=ConversationStore(Path(directory)/'test.sqlite');cid=store.create('alice','openai')['id']
+        run=store.reserve('alice',cid,InteractiveRequest(provider='openai',model='gpt-6.1-terra',question='q'),'r')
+        ev=_evidence('evidence-0001','source')
+        graph=_orchestrator(planner=FakePlanner(calls,_plan(SpecialistName.LOOKUP)),specialists={SpecialistName.LOOKUP:FakeSpecialist(SpecialistName.LOOKUP,calls,[_result(SpecialistName.LOOKUP,(ev,),'candidate')])},critic=RepeatCritic(calls,[]),tools=FakeTools(calls))
+        graph._on_progress=lambda event,payload:store.progress(run['id'],event,payload)
+        result=await graph.run(_task())
+        assert result.error_category == TerminalErrorCategory.LOOP_DETECTED
+        failure=failure_details(result.error_category.value,store.run('alice',run['id'])['progress'])
+        assert (failure['stage'],failure['component'],failure['tool'],failure['tool_category']) == ('verify','tool','read_webpage','repeated_call')
+
+
+@pytest.mark.asyncio
+async def test_submit_has_separate_one_call_budget_even_after_critic_exhausts_allowance():
+    calls=[]
+    client=_BudgetedToolClient(FakeTools(calls),max_calls=2,audit=lambda *_:None,separate_submission_budget=True)
+    client.start_scope('verify:1',stage='critic',max_calls=2,deadline=None)
+    await client.call('web_search',{'query':'q1'})
+    await client.call('web_search',{'query':'q2'})
+    client.start_scope('submit',stage='critic',max_calls=2,deadline=None)
+    await client.call('submit_answer',{'answer':'verified','evidence_ids':[]})
+    assert calls == ['web_search','web_search','submit_answer']
+    with pytest.raises(_ToolBudgetExhausted):
+        await client.call('submit_answer',{'answer':'verified','evidence_ids':[]})
+
+
+@pytest.mark.asyncio
+async def test_exact_search_reused_across_research_and_verification_without_notebook():
+    calls=[]; events=[]
+    client=_BudgetedToolClient(FakeTools(calls),max_calls=8,audit=lambda e,p:events.append((e,p)))
+    args={'query':'synthetic uiuc query'}
+    client.start_scope('act:1',stage='specialist',max_calls=4,deadline=None)
+    first=await client.call('web_search',args)
+    client.start_scope('verify:1',stage='critic',max_calls=4,deadline=None)
+    reused=await client.call('web_search',dict(args))
+    assert calls == ['web_search']
+    assert reused['result'] == first['result']
+    assert reused['_cache']['hit'] is True
+    assert any(event=='tool_call_reused' for event,_ in events)
+
+
+@pytest.mark.asyncio
+async def test_search_cache_is_exact_task_scoped_and_never_stores_errors():
+    class Backend:
+        def __init__(self):
+            self.calls = []
+        async def call(self, name, arguments):
+            self.calls.append((name, dict(arguments)))
+            if arguments.get('query') == 'failed':
+                return {'error': 'temporary'}
+            return {'answer': 'ok'}
+
+    backend = Backend()
+    first = _BudgetedToolClient(backend, max_calls=12, audit=lambda *_: None)
+    first.start_scope('research', stage='specialist', max_calls=12, deadline=None)
+    await first.call('web_search', {'query': 'one'})
+    await first.call('web_search', {'query': 'failed'})
+    first.start_scope('verify', stage='critic', max_calls=12, deadline=None)
+    assert (await first.call('web_search', {'query': 'one'}))['_cache']['hit']
+    await first.call('web_search', {'query': 'one', 'limit': 2})
+    await first.call('web_search', {'query': 'failed'})
+    second = _BudgetedToolClient(backend, max_calls=3, audit=lambda *_: None)
+    second.start_scope('research', stage='specialist', max_calls=3, deadline=None)
+    assert '_cache' not in await second.call('web_search', {'query': 'one'})
+    assert len(backend.calls) == 5
+
+
+@pytest.mark.asyncio
+async def test_webpage_cache_reuses_only_exact_url():
+    calls = []
+    client = _BudgetedToolClient(FakeTools(calls), max_calls=4, audit=lambda *_: None)
+    client.start_scope('research', stage='specialist', max_calls=4, deadline=None)
+    await client.call('read_webpage', {'url': 'https://example.org/a'})
+    client.start_scope('verify', stage='critic', max_calls=4, deadline=None)
+    reused = await client.call('read_webpage', {'url': 'https://example.org/a'})
+    await client.call('read_webpage', {'url': 'https://example.org/b'})
+    assert reused['_cache']['hit'] is True
+    assert calls == ['read_webpage', 'read_webpage']
+
+
+@pytest.mark.asyncio
+async def test_reserved_submit_respects_deadline():
+    client = _BudgetedToolClient(FakeTools([]), max_calls=1, audit=lambda *_: None,
+                                 clock=lambda: 10.0, separate_submission_budget=True)
+    client.start_scope('submit', stage='critic', max_calls=0, deadline=9.0)
+    with pytest.raises(orchestrator_module.StageBudgetExceeded) as exc:
+        await client.call('submit_answer', {'answer': 'x', 'evidence_ids': []})
+    assert exc.value.reason == 'time'
+
+
+@pytest.mark.asyncio
+async def test_interactive_submission_survives_full_critic_tool_budget():
+    calls = []
+    evidence = _evidence('source-1', 'source')
+    specialist = FakeSpecialist(SpecialistName.LOOKUP, calls,
+        [_result(SpecialistName.LOOKUP, (evidence,), 'Marie Curie')])
+    critic = FakeCritic(calls, [_decision('approve', ('evidence-0001',))],
+        tool_calls=[('web_search', {'query': f'verify-{i}'}) for i in range(6)])
+    tools = FakeTools(calls)
+    orchestrator = Orchestrator(planner=FakePlanner(calls, _plan(SpecialistName.LOOKUP)),
+        specialists={SpecialistName.LOOKUP: specialist}, critic=critic,
+        tool_client_factory=FakeToolFactory(tools),
+        config=_config(critic_max_tool_calls=6), separate_submission_budget=True)
+    result = await orchestrator.run(_task())
+    assert result.answer == 'Marie Curie'
+    assert result.error_category is None
+    assert calls.count('web_search') == 6
+    assert calls[-1] == 'submit_answer'

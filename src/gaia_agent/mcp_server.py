@@ -11,6 +11,7 @@ import socket
 import stat
 import threading
 import time
+import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from collections.abc import Awaitable, Callable, Iterator
@@ -18,7 +19,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -468,7 +469,24 @@ class AttachmentReader:
                 "kind": "pdf",
                 "page_count": len(pages),
                 "text": "\n\n".join(pages),
+                "requires_ocr": not any(page.strip() for page in pages),
             }
+        if suffix == ".docx":
+            _validate_xlsx_archive(resolved)
+            with zipfile.ZipFile(resolved) as archive, archive.open("word/document.xml") as source:
+                raw = source.read(MAX_DECODED_TEXT_BYTES + 1)
+            _require_size_within(len(raw), MAX_DECODED_TEXT_BYTES, "DOCX XML bytes")
+            xml = raw.decode("utf-8-sig")
+            if "<!DOCTYPE" in xml.upper() or "<!ENTITY" in xml.upper():
+                raise ValueError("DOCX XML declarations are not supported")
+            root = ET.fromstring(xml)
+            ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            paragraphs = []
+            for paragraph in root.iter(ns + "p"):
+                text = "".join(node.text or "" for node in paragraph.iter(ns + "t"))
+                if text.strip():
+                    paragraphs.append(text)
+            return {"path": relative, "kind": "docx", "text": "\n".join(paragraphs)}
         if suffix == ".xlsx":
             _validate_xlsx_archive(resolved)
             workbook = load_workbook(resolved, read_only=True, data_only=True)
@@ -609,9 +627,7 @@ def _validate_xlsx_archive(path: Path) -> None:
 @contextmanager
 def _bounded_pdf_decoding() -> Iterator[None]:
     with _PDF_FILTER_LOCK:
-        original_limits = {
-            name: getattr(pypdf_filters, name) for name in _PDF_FILTER_LIMIT_NAMES
-        }
+        original_limits = {name: getattr(pypdf_filters, name) for name in _PDF_FILTER_LIMIT_NAMES}
         original_decompress = pypdf_filters.decompress
         for name, current_limit in original_limits.items():
             setattr(
@@ -649,6 +665,7 @@ def _bounded_zlib_decompress(data: bytes) -> bytes:
 
 class HostedOpenAIBackend:
     provider = "openai"
+
     def __init__(
         self,
         *,
@@ -678,7 +695,11 @@ class HostedOpenAIBackend:
                 tools=[{"type": "web_search"}],
                 tool_choice="required",
                 include=["web_search_call.action.sources"],
-                reasoning={"effort": self._reasoning_effort},
+                **(
+                    {"reasoning": {"effort": self._reasoning_effort}}
+                    if self._reasoning_effort
+                    else {}
+                ),
             ),
             timeout=self._web_search_timeout_seconds,
         )
@@ -715,7 +736,11 @@ class HostedOpenAIBackend:
                 ],
                 tool_choice="required",
                 include=["code_interpreter_call.outputs"],
-                reasoning={"effort": self._reasoning_effort},
+                **(
+                    {"reasoning": {"effort": self._reasoning_effort}}
+                    if self._reasoning_effort
+                    else {}
+                ),
             ),
             timeout=self._timeout_seconds,
         )
@@ -770,10 +795,12 @@ def _with_response_usage(result: dict[str, Any], response: Any) -> dict[str, Any
             "total_tokens": _field(raw_usage, "total_tokens", 0),
         }
     )
-    return _TrustedHostedResult({
-        **result,
-        HOSTED_USAGE_METADATA_KEY: usage,
-    })
+    return _TrustedHostedResult(
+        {
+            **result,
+            HOSTED_USAGE_METADATA_KEY: usage,
+        }
+    )
 
 
 def _validated_hosted_usage(value: Any) -> dict[str, int]:
@@ -799,6 +826,7 @@ def _jsonable(value: Any) -> Any:
 
 class FakeHostedBackend:
     provider = "openai"
+
     def __init__(
         self,
         api_key: str,
@@ -854,15 +882,24 @@ class MCPServerSettings:
     hf_token: str
     serper_api_key: str = ""
     serpapi_api_key: str = ""
+    deepseek_api_key: str = ""
     search_provider: SearchProvider | None = None
     search_client: httpx.AsyncClient | None = None
     webpage_retry_policy: RetryPolicy = field(
-        default_factory=lambda: RetryPolicy(max_attempts=3, base_delay_seconds=0.25, max_delay_seconds=1)
+        default_factory=lambda: RetryPolicy(
+            max_attempts=3, base_delay_seconds=0.25, max_delay_seconds=1
+        )
     )
 
     @property
     def secrets(self) -> tuple[str, ...]:
-        return (self.api_key, self.hf_token, self.serper_api_key, self.serpapi_api_key)
+        return (
+            self.api_key,
+            self.hf_token,
+            self.serper_api_key,
+            self.serpapi_api_key,
+            self.deepseek_api_key,
+        )
 
     async def aclose(self) -> None:
         close_web_reader = getattr(self.web_reader, "aclose", None)
@@ -899,12 +936,26 @@ class MCPServerSettings:
 def _safe_trace_metadata(values: dict[str, Any]) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     provider = values.get("provider")
-    if provider in {"openai", "serper", "serpapi"}:
+    if provider in {"openai", "deepseek", "serper", "serpapi"}:
         safe["provider"] = provider
     category = values.get("category")
     if category in {
-        "tool_error", "search_unavailable", "timeout", "transport", "http_status",
-        "parse_failure", "empty_content", "policy_rejection", "provider_error",
+        "tool_error",
+        "search_unavailable",
+        "timeout",
+        "transport",
+        "http_status",
+        "parse_failure",
+        "empty_content",
+        "policy_rejection",
+        "provider_error",
+        "authentication",
+        "balance",
+        "forbidden",
+        "invalid_input",
+        "rate_limit",
+        "upstream",
+        "response_too_large",
     }:
         safe["category"] = category
     retryable = values.get("retryable")
@@ -1057,7 +1108,9 @@ async def _read_webpage_with_fallback(settings: MCPServerSettings, url: str) -> 
             if not bool(getattr(error, "retryable", False)):
                 raise
             if attempt < settings.webpage_retry_policy.max_attempts:
-                await asyncio.sleep(retry_delay(settings.webpage_retry_policy, attempt, lambda: 0.0))
+                await asyncio.sleep(
+                    retry_delay(settings.webpage_retry_policy, attempt, lambda: 0.0)
+                )
                 continue
             try:
                 provider = settings.search_provider or settings.backend
@@ -1070,17 +1123,19 @@ async def _read_webpage_with_fallback(settings: MCPServerSettings, url: str) -> 
                 "attempt_count": getattr(snippets, "attempt_count", 1),
                 "fallback_used": True,
             }
-            if provider_name in {"openai", "serper", "serpapi"}:
+            if provider_name in {"openai", "deepseek", "serper", "serpapi"}:
                 trace_metadata["provider"] = provider_name
             circuit_open_count = getattr(snippets, "circuit_open_count", None)
             if isinstance(circuit_open_count, int) and not isinstance(circuit_open_count, bool):
                 trace_metadata["circuit_open_count"] = circuit_open_count
             return _SearchFallbackResult(
                 {
-                "url": url,
-                "answer": str(snippets.get("answer") or ""),
-                "sources": snippets.get("sources") if isinstance(snippets.get("sources"), list) else [],
-                "fallback": "search",
+                    "url": url,
+                    "answer": str(snippets.get("answer") or ""),
+                    "sources": snippets.get("sources")
+                    if isinstance(snippets.get("sources"), list)
+                    else [],
+                    "fallback": "search",
                 },
                 trace_metadata,
             )
@@ -1101,6 +1156,16 @@ def _is_webpage_policy_error(error: ValueError) -> bool:
     )
 
 
+async def _guarded_web_operation(settings, value, operation):
+    decoded = unquote(value)
+    if any(secret and secret in decoded for secret in settings.secrets):
+        error = ToolCallError("policy_rejection")
+        error.category = "policy_rejection"
+        error.retryable = False
+        raise error
+    return await operation()
+
+
 def build_server(settings: MCPServerSettings) -> MCPServer:
     server = MCPServer("gaia-tools")
 
@@ -1109,10 +1174,14 @@ def build_server(settings: MCPServerSettings) -> MCPServer:
         """Search the public and return a concise answer with source URLs."""
         return await _safe_tool_call(
             settings,
-            (
-                (settings.search_provider or settings.backend).search(query)
-                if hasattr(settings.search_provider or settings.backend, "search")
-                else settings.backend.web_search(query)
+            _guarded_web_operation(
+                settings,
+                query,
+                lambda: (
+                    (settings.search_provider or settings.backend).search(query)
+                    if hasattr(settings.search_provider or settings.backend, "search")
+                    else settings.backend.web_search(query)
+                ),
             ),
             web_result=True,
             mcp_result=True,
@@ -1122,7 +1191,11 @@ def build_server(settings: MCPServerSettings) -> MCPServer:
     async def read_webpage(url: str) -> dict[str, Any]:
         """Read public HTTP(S) page text with redirects, timeout, and size limits."""
         return await _safe_tool_call(
-            settings, _read_webpage_with_fallback(settings, url), mcp_result=True
+            settings,
+            _guarded_web_operation(
+                settings, url, lambda: _read_webpage_with_fallback(settings, url)
+            ),
+            mcp_result=True,
         )
 
     @server.tool()
@@ -1148,7 +1221,7 @@ def build_server(settings: MCPServerSettings) -> MCPServer:
 
     @server.tool()
     async def submit_answer(answer: str, evidence_ids: list[str]) -> dict[str, Any]:
-        """Return the concise terminal answer and evidence references."""
+        """Return the final answer and evidence references."""
         return await _safe_tool_call(
             settings,
             lambda: {"answer": answer.strip(), "evidence_ids": evidence_ids},
@@ -1158,7 +1231,23 @@ def build_server(settings: MCPServerSettings) -> MCPServer:
     return server
 
 
+class PortableBackend:
+    """No model client or implicit paid fallback in portable tool mode."""
+
+    async def web_search(self, query: str) -> dict[str, Any]:
+        raise ToolCallError("capability_unavailable")
+
+    async def execute_python(self, instruction: str, paths: list[str]) -> dict[str, Any]:
+        raise ToolCallError("capability_unavailable")
+
+    async def transcribe_audio(self, path: str) -> dict[str, Any]:
+        raise ToolCallError("capability_unavailable")
+
+
 def _settings_from_env() -> MCPServerSettings:
+    mode = os.environ.get("AGENT_TOOL_MODE")
+    if mode is not None and mode not in {"openai", "portable"}:
+        raise ValueError("capability_unavailable")
     task_root = Path(os.environ["GAIA_TASK_ROOT"]).resolve()
     raw_attachments = json.loads(os.environ.get("GAIA_ATTACHMENTS", "[]"))
     if not isinstance(raw_attachments, list) or not all(
@@ -1170,6 +1259,7 @@ def _settings_from_env() -> MCPServerSettings:
     hf_token = os.environ.get("HF_TOKEN", "")
     serper_api_key = os.environ.get("SERPER_API_KEY", "")
     serpapi_api_key = os.environ.get("SERPAPI_API_KEY", "")
+    deepseek_api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     timeout_seconds = float(os.environ.get("GAIA_TIMEOUT_SECONDS", "300"))
     specialist_timeout_seconds = float(
         os.environ.get("GAIA_SPECIALIST_TIMEOUT_SECONDS", str(timeout_seconds))
@@ -1189,14 +1279,17 @@ def _settings_from_env() -> MCPServerSettings:
         specialist_timeout_seconds / (fallback_provider_count + 1),
         MAX_HOSTED_WEB_SEARCH_TIMEOUT_SECONDS,
     )
-    if fake_backend:
-        backend: HostedBackend = FakeHostedBackend(api_key, hf_token, attachment_reader)
+    if mode == "portable":
+        api_key = hf_token = ""
+        backend: HostedBackend = PortableBackend()
+    elif fake_backend:
+        backend = FakeHostedBackend(api_key, hf_token, attachment_reader)
     else:
         client = AsyncOpenAI(api_key=api_key, max_retries=0)
         backend = HostedOpenAIBackend(
             client=client,
-            model=os.environ.get("GAIA_MODEL", "gpt-5.6-luna"),
-            reasoning_effort=os.environ.get("GAIA_REASONING_EFFORT", "max"),
+            model=os.environ.get("GAIA_MODEL", "gpt-6.1-sol"),
+            reasoning_effort=os.environ.get("GAIA_REASONING_EFFORT", "low"),
             attachment_reader=attachment_reader,
             timeout_seconds=timeout_seconds,
             web_search_timeout_seconds=hosted_web_search_timeout_seconds,
@@ -1204,8 +1297,20 @@ def _settings_from_env() -> MCPServerSettings:
     search_provider: SearchProvider | None = None
     search_client: httpx.AsyncClient | None = None
     if not fake_backend:
-        search_providers: list[SearchProvider] = [OpenAISearchProvider(backend)]
-        search_client = httpx.AsyncClient()
+        search_providers: list[SearchProvider] = (
+            [] if mode == "portable" else [OpenAISearchProvider(backend)]
+        )
+        search_client = httpx.AsyncClient(follow_redirects=False, trust_env=False)
+        if deepseek_api_key:
+            from gaia_agent.deepseek_tools import DeepSeekSearchProvider
+
+            search_providers.append(
+                DeepSeekSearchProvider(
+                    deepseek_api_key,
+                    search_client,
+                    timeout_seconds=min(specialist_timeout_seconds, 20.0),
+                )
+            )
         if serper_api_key:
             search_providers.append(
                 SerperSearchProvider(
@@ -1222,12 +1327,16 @@ def _settings_from_env() -> MCPServerSettings:
                     timeout_seconds=min(specialist_timeout_seconds, 20.0),
                 )
             )
-        search_provider = SearchProviderChain(
-            search_providers,
-            provider_retry_policy,
-            time.monotonic,
-            circuit_cooldown_seconds=search_circuit_cooldown,
-            operation_timeout_seconds=search_timeout_seconds,
+        search_provider = (
+            SearchProviderChain(
+                search_providers,
+                provider_retry_policy,
+                time.monotonic,
+                circuit_cooldown_seconds=search_circuit_cooldown,
+                operation_timeout_seconds=search_timeout_seconds,
+            )
+            if search_providers
+            else None
         )
     return MCPServerSettings(
         task_root=task_root,
@@ -1240,6 +1349,7 @@ def _settings_from_env() -> MCPServerSettings:
         hf_token=hf_token,
         serper_api_key=serper_api_key,
         serpapi_api_key=serpapi_api_key,
+        deepseek_api_key=deepseek_api_key,
         search_provider=search_provider,
         search_client=search_client,
     )
