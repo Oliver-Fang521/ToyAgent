@@ -5,8 +5,8 @@
 ## 首次启动
 
 ```sh
-git clone https://github.com/Oliver-Fang521/toy_multi_agent.git
-cd toy_multi_agent
+git clone https://github.com/Oliver-Fang521/ToyAgent.git
+cd ToyAgent
 cp .env.local.example .env.local
 docker compose --env-file .env.local up -d --build --wait
 ```
