@@ -1,6 +1,6 @@
 # ToyAgent
 
-ToyAgent is a multi-model AI agent that I built to bring conversation, web research, file analysis, and persistent memory into one interactive workspace. It assesses each request and decides whether to answer directly, ask for clarification, or run a research workflow with tools and evidence verification.
+ToyAgent is an AI agent that I built to bring conversation, web research, file analysis, and persistent memory into one interactive workspace. It assesses each request and decides whether to answer directly, ask for clarification, or run a research workflow with tools and evidence verification.
 
 The project focuses on the full interaction: understanding context, choosing tools, checking evidence, showing progress, and reporting which stage failed when something goes wrong.
 
