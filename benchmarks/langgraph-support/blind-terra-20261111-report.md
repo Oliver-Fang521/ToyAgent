@@ -1,161 +1,162 @@
-# LangGraph 技术支持：直接回答与 ToyAgent 对照
+# LangGraph Support Evaluation: Direct Model vs. ToyAgent
 
-20 道相同历史问题。两组均使用 GPT-6.1 Terra、medium 推理等级；基线只收到问题并直接回答，不提供搜索或其他工具。ToyAgent 使用正常路由、搜索和验证工具，临时记忆，隔离工作目录。两组均未收到评分参考。
-评分由同一模型家族的独立调用进行，参考历史 issue 中整理的答案；模型评分不是人工金标准，历史参考可能过时，且不应推断本次结果适用于全部问题。并发运行会影响耗时。
+The two systems answered the same 20 historical questions. Both used GPT-6.1 Terra with medium reasoning. The baseline received only the question and could not search or use other tools. ToyAgent used its normal routing, search, and verification tools with temporary memory and an isolated workspace. Neither system received the scoring references.
 
-## 结果
+A separate call to the same model graded the answers against references compiled from historical issue discussions. These model judgments are not human ground truth. References may be outdated, the selected cases are not representative of every task, and concurrent execution affects latency measurements.
 
-| 评分 | 直接回答 | ToyAgent |
+## Results
+
+| Rating | Direct model | ToyAgent |
 |---|---:|---:|
-| 正确 | 4/20 | 18/20 |
-| 部分正确 | 16/20 | 2/20 |
-| 错误 | 0/20 | 0/20 |
-| 无法回答 | 0/20 | 0/20 |
-| 运行失败 | 0/20 | 0/20 |
+| Correct | 4/20 | 18/20 |
+| Partially correct | 16/20 | 2/20 |
+| Incorrect | 0/20 | 0/20 |
+| Abstained | 0/20 | 0/20 |
+| Execution failed | 0/20 | 0/20 |
 
-**baseline**：耗时中位数 15.3 秒；记录到 19,251 tokens；搜索工具调用 0 次。
+**Direct model:** median latency 15.3 seconds; 19,251 recorded tokens; 0 search tool calls.
 
-**toyagent**：耗时中位数 112.9 秒；记录到 1,908,994 tokens；搜索工具调用 78 次。
+**ToyAgent:** median latency 112.9 seconds; 1,908,994 recorded tokens; 78 search tool calls.
 
-Token 只计入成功记录返回的用量，失败或中断的请求以及评分调用可能产生额外费用；搜索另行计费，实际费用以服务商账单为准。
+Token totals cover usage returned in completed run records. Failed or interrupted requests and grading calls may incur additional charges. Search may be billed separately; consult the provider's bill for actual costs.
 
-## 评分与用量补充
+## Scoring and usage notes
 
-独立评分调用记录了 533,362 tokens；搜索调用按工具轨迹计数，不等于服务商的收费请求数。评分模型与被测模型属于同一模型，两个答案按固定顺序一起评分，可能存在偏差。
+The separate grading calls recorded 533,362 tokens. Search calls are counted from tool traces and do not necessarily equal billable provider requests. The judge used the same model as the systems under test, and saw both answers together in a fixed order, which may introduce bias.
 
-部分问题未说明具体产品或版本，而历史参考依赖对应 issue，这可能导致合理但通用的直接回答被评为部分正确。配对结果中，4 题两组均正确，14 题 ToyAgent 正确而基线部分正确，2 题两组均部分正确。
+Some questions do not specify a product or version, while the historical reference depends on a particular issue. This can result in a reasonable general answer being rated partially correct. In the paired results, both systems were correct on 4 cases; ToyAgent was correct while the baseline was partially correct on 14; and both were partially correct on 2.
 
-已抽查 case-001、case-005 和 case-011 的答案与评分理由；其余评分未逐条人工审定。评分时使用的原始工具结果未公开，因此公开文件无法独立复核所有证据支持判断。
+Cases 001, 005, and 011 were spot-checked against their answers and grading explanations; the other judgments were not individually reviewed by a human. Original tool-result contents used by the judge are not published, so readers cannot independently verify every evidence-support judgment from the public files.
 
-## 逐题结果
+## Per-case results
 
-| 题目 | 直接回答 | ToyAgent | 直接回答耗时 | ToyAgent 耗时 | 路由 |
+| Case | Direct model | ToyAgent | Direct time | ToyAgent time | Route |
 |---|---|---|---:|---:|---|
-| case-001 | 部分正确 | 正确 | 18.2s | 82.9s | research |
-| case-002 | 正确 | 正确 | 10.6s | 8.9s | direct |
-| case-003 | 部分正确 | 正确 | 21.1s | 118.6s | research |
-| case-004 | 部分正确 | 正确 | 16.9s | 119.6s | research |
-| case-005 | 部分正确 | 部分正确 | 8.8s | 6.6s | direct |
-| case-006 | 部分正确 | 正确 | 15.8s | 114.1s | research |
-| case-007 | 部分正确 | 正确 | 16.8s | 184.2s | research |
-| case-008 | 部分正确 | 正确 | 15.9s | 166.1s | research |
-| case-009 | 正确 | 正确 | 9.4s | 98.1s | research |
-| case-010 | 部分正确 | 正确 | 13.4s | 77.3s | research |
-| case-011 | 部分正确 | 部分正确 | 11.2s | 9.9s | direct |
-| case-012 | 部分正确 | 正确 | 12.1s | 135.3s | research |
-| case-013 | 部分正确 | 正确 | 12.4s | 118.7s | research |
-| case-014 | 部分正确 | 正确 | 17.6s | 76.6s | research |
-| case-015 | 部分正确 | 正确 | 17.2s | 169.2s | research |
-| case-016 | 正确 | 正确 | 9.2s | 111.5s | research |
-| case-017 | 部分正确 | 正确 | 14.8s | 125.9s | research |
-| case-018 | 部分正确 | 正确 | 12.0s | 114.8s | research |
-| case-019 | 正确 | 正确 | 21.4s | 12.6s | direct |
-| case-020 | 部分正确 | 正确 | 15.9s | 111.7s | research |
+| case-001 | Partial | Correct | 18.2s | 82.9s | research |
+| case-002 | Correct | Correct | 10.6s | 8.9s | direct |
+| case-003 | Partial | Correct | 21.1s | 118.6s | research |
+| case-004 | Partial | Correct | 16.9s | 119.6s | research |
+| case-005 | Partial | Partial | 8.8s | 6.6s | direct |
+| case-006 | Partial | Correct | 15.8s | 114.1s | research |
+| case-007 | Partial | Correct | 16.8s | 184.2s | research |
+| case-008 | Partial | Correct | 15.9s | 166.1s | research |
+| case-009 | Correct | Correct | 9.4s | 98.1s | research |
+| case-010 | Partial | Correct | 13.4s | 77.3s | research |
+| case-011 | Partial | Partial | 11.2s | 9.9s | direct |
+| case-012 | Partial | Correct | 12.1s | 135.3s | research |
+| case-013 | Partial | Correct | 12.4s | 118.7s | research |
+| case-014 | Partial | Correct | 17.6s | 76.6s | research |
+| case-015 | Partial | Correct | 17.2s | 169.2s | research |
+| case-016 | Correct | Correct | 9.2s | 111.5s | research |
+| case-017 | Partial | Correct | 14.8s | 125.9s | research |
+| case-018 | Partial | Correct | 12.0s | 114.8s | research |
+| case-019 | Correct | Correct | 21.4s | 12.6s | direct |
+| case-020 | Partial | Correct | 15.9s | 111.7s | research |
 
-## 每题评分理由
+## Per-case grading explanations
 
 ### case-001
 
-- 直接回答：提供了区分实际保存与流事件的有效排查方法，但未指出已知的 interrupt_after 漏发事件问题，也未建议确认是否包含 #9409 修复。无工具或来源记录，证据支持无法核查。
-- ToyAgent：准确指出已知问题、#9409 修复和版本核查，并提供状态与流事件的对比方法。工具记录中的 issue 和 PR 内容也支持其复现版本及 1.2.18 发布说明的说法。
+- **Direct model:** Offered useful steps to distinguish actual checkpoint persistence from stream events, but did not identify the known `interrupt_after` missing-event issue or recommend checking for fix #9409. No tool or source record was available to verify support.
+- **ToyAgent:** Identified the known issue, fix #9409, and version checks, with steps to compare saved state and stream events. The original tool records included issue and PR content supporting the reproduction version and 1.2.18 release-note claims.
 
 ### case-002
 
-- 直接回答：建议使用稳定 UUID 或固定长度哈希，并说明会话隔离和旧 checkpoint 迁移，能解决问题。无工具记录，来源支持不可核查；该系统未提供搜索工具。
-- ToyAgent：建议保存并复用会话 UUID，也提供哈希方案及会话混用警告，能解决问题。未提旧数据迁移，但不影响主要结论。无工具记录，来源支持不可核查。
+- **Direct model:** Recommended a stable UUID or fixed-length hash and discussed session isolation and migration of old checkpoints. This addresses the problem. The system had no tools, so source support could not be checked.
+- **ToyAgent:** Recommended storing and reusing a session UUID, with hashing and a warning about shared sessions. It did not mention migration, but that did not affect the main solution. No tool record was available to verify source support.
 
 ### case-003
 
-- 直接回答：提供了版本检查、运行路径对比和最小复现等有效排查步骤，但未指出已知流式路径缺陷及 #9407 修复。无工具记录，无法核查外部证据；不因缺少引用扣分。
-- ToyAgent：准确定位已知缺陷、流式路径及升级和替代方案；工具记录中的 PR 和发行说明支持修复已进入 1.2.19 的判断。
+- **Direct model:** Provided useful version checks, execution-path comparisons, and a minimal reproduction, but did not identify the known streaming-path defect or fix #9407. There was no tool record to check external support; missing citations were not penalized.
+- **ToyAgent:** Located the known defect and streaming path and suggested upgrades and alternatives. The original PR and release-note records supported the conclusion that the fix entered 1.2.19.
 
 ### case-004
 
-- 直接回答：提出了 sync 缓解、检查持久化错误和恢复状态等有用建议，但未识别 1.2.14 的已知缺陷及升级至 1.2.15 的修复，主要按一般异步持久化风险解释。无工具记录可供核查。
-- ToyAgent：指出 #9235 和 1.2.15 修复，建议升级后故障注入验证，并覆盖临时 sync 缓解、错误处理及受影响状态恢复。工具记录中的 issue、PR 和文档内容支持主要结论，相关限制也有依据。
+- **Direct model:** Offered useful sync mitigation, persistence-error checks, and recovery guidance, but did not identify the known 1.2.14 defect or its 1.2.15 fix. Its explanation focused on general asynchronous persistence risks. No tool record was available to check support.
+- **ToyAgent:** Identified #9235 and the 1.2.15 fix; recommended fault-injection testing after upgrading; and covered temporary sync mitigation, error handling, and affected-state recovery. The original issue, PR, and documentation records supported the main claims and qualifications.
 
 ### case-005
 
-- 直接回答：正确指出协程未等待及调用链检查，但未明确检查自定义 saver 的同步、异步方法及 await adelete_thread，也未索取调用代码和版本。无工具记录可核验来源。
-- ToyAgent：提供了有用的异步调用和任务生命周期排查，但未明确检查自定义 saver 及 await adelete_thread，也未索取调用代码和版本。无工具记录可核验来源。
+- **Direct model:** Correctly identified an unawaited coroutine and suggested checking the call chain, but did not explicitly inspect custom saver's synchronous and asynchronous methods or `await adelete_thread`, and did not request code or versions. No tool record was available to verify support.
+- **ToyAgent:** Offered useful asynchronous-call and task-lifecycle troubleshooting, but also omitted explicit custom saver and `await adelete_thread` checks and did not request code or versions. No tool record was available to verify support.
 
 ### case-006
 
-- 直接回答：正确解释竞争并给出串行化、防旧写入等有效缓解措施，但遗漏 saver 已弃用及评估 AsyncPostgresSaver 与 durability=exit 的维护者建议。无工具或来源记录，证据支持无法核查。
-- ToyAgent：给出维护者推荐的迁移方案，并说明串行化及持久化语义差异。工具记录中的 issue、维护者评论、PR 和源码支持主要结论；搜索结果对关闭状态曾有冲突，但 API 记录支持最终表述。
+- **Direct model:** Correctly explained the race and suggested serialization and prevention of stale writes, but omitted the maintainer's recommendation to assess migration from the deprecated saver to `AsyncPostgresSaver` and `durability=exit`. No tool or source record was available to verify support.
+- **ToyAgent:** Presented the maintainer-recommended migration and explained serialization and persistence-semantics differences. The original issue, maintainer comments, PR, and source records supported the main conclusions. Search results conflicted about closure status, but the API record supported the final statement.
 
 ### case-007
 
-- 直接回答：指出记录两个包的版本、旧版 thread_ts 与新版 checkpoint_id 的区别，并提供字段排查方法；但未明确要求核对包及测试版本的兼容性，也未直接排查 metadata 字典断言差异。无工具记录，证据支持无法核查。
-- ToyAgent：明确排查依赖和测试版本兼容性，解释 thread_ts 支持变更及 metadata 比较，并给出处理步骤。工具记录中的 issue、PR 差异和查询源码支持核心判断；也提醒实际环境可能不同。
+- **Direct model:** Recommended recording package versions, distinguished old `thread_ts` from newer `checkpoint_id`, and suggested field checks, but did not explicitly check package/test compatibility or the metadata-dictionary assertion difference. No tool record was available to verify support.
+- **ToyAgent:** Explicitly checked dependency and test-version compatibility, explained the change in `thread_ts` support and metadata comparisons, and gave remediation steps. The original issue, PR diff, and query source supported the core diagnosis; the answer also noted environment differences.
 
 ### case-008
 
-- 直接回答：正确指出协议兼容不等于 SQL 和事务兼容，并给出 PostgreSQL 替代方案与排查建议；但未提及 CockroachDB 专用 checkpointer，对必须使用 CockroachDB 的场景不够完整。无工具或来源记录，证据支持无法核查。
-- ToyAgent：推荐专用 CockroachDBSaver 并给出读写及恢复验证，符合参考方案。工具记录支持已知兼容问题、版本要求和主要 API；示例代码未见实际执行，应以目标环境测试为准。
+- **Direct model:** Correctly noted that protocol compatibility does not imply SQL and transaction compatibility and suggested PostgreSQL alternatives, but did not mention the CockroachDB-specific checkpointer needed when CockroachDB must be retained. No tool or source record was available to verify support.
+- **ToyAgent:** Recommended the dedicated CockroachDBSaver and read/write and recovery checks, consistent with the reference. Original tool records supported the known compatibility issue, version requirements, and main API. The example was not observed executing and should be tested in the target environment.
 
 ### case-009
 
-- 直接回答：准确解释了运行配置的 metadata 被保存为检查点元数据，并由快照读取；版本差异等提醒合理。该系统没有工具记录，证据支持情况无法核查，不影响正确性判断。
-- ToyAgent：准确说明了保存和读取路径，并限定了版本及 checkpointer 差异。工具记录中的搜索结果和部分源码支持核心机制及合并规则；部分源码页面被截断。
+- **Direct model:** Correctly explained that runtime configuration metadata is stored as checkpoint metadata and read back in the snapshot; version caveats were reasonable. It had no tool records, so external support could not be checked; this did not affect correctness.
+- **ToyAgent:** Correctly described the save/read path and qualified version and checkpointer differences. Original search results and partial source records supported the mechanism and merge rules, although some source pages were truncated.
 
 ### case-010
 
-- 直接回答：幂等、去重和测试建议有用，但未识别已知缺陷，也未给出 1.2.16 的明确修复版本。无工具或来源记录，证据支持无法核验。
-- ToyAgent：准确指出 #9315 和 1.2.16，提供升级、幂等及回归测试建议。工具记录支持核心结论；引用的是相关问题 #9106，而非参考中的 #9276，不影响诊断。
+- **Direct model:** Idempotency, deduplication, and testing advice was useful, but it did not identify the known defect or its 1.2.16 fix. No tool or source record was available to verify support.
+- **ToyAgent:** Identified #9315 and 1.2.16 and recommended upgrading, idempotency, and regression testing. The original records supported the core conclusion; the answer cited related issue #9106 rather than reference issue #9276 without changing the diagnosis.
 
 ### case-011
 
-- 直接回答：时序、事件流和恢复关联的排查建议有用，但未指出核对 Agent Server 版本及 0.17.0 对暂停期间 resume 的处理。无工具证据可核验；竞态解释只是待验证的可能性。
-- ToyAgent：提供了有用的事件链和时序对照排查，但未指出核对 Agent Server 版本及 0.17.0 的相关行为。没有记录可供核验的工具证据。
+- **Direct model:** Offered useful timing, event-stream, and resume-association troubleshooting, but did not identify the need to check Agent Server version or the 0.17.0 handling of resume during interruption. No tool evidence was available; the race explanation remained a hypothesis.
+- **ToyAgent:** Offered useful event-chain and timing comparisons, but also omitted Agent Server version checks and the related 0.17.0 behavior. No tool evidence was recorded.
 
 ### case-012
 
-- 直接回答：区分已加载和新产生的 writes 是有用的修复方向，但未指出 #9114 或检查部署版本是否包含修复，也遗漏了回放顺序问题。按 task_id 去重未必有效，因为重复写入可能使用不同的任务 ID。无工具证据可核验。
-- ToyAgent：正确指出 #9114、回放顺序及升级方案，并给出有范围限制的临时处理。记录中的发布说明直接支持具体版本，并非仅凭历史参考推断；还应结合实际部署版本确认修复是否生效。
+- **Direct model:** Distinguishing loaded writes from new writes was useful, but it omitted #9114, deployment-version checks, and replay ordering. Deduplication by `task_id` may not work because duplicate writes can use different task IDs. No tool evidence was available.
+- **ToyAgent:** Identified #9114, replay ordering, and an upgrade path, with a scoped temporary mitigation. The original release notes directly supported the version, which should still be checked against the deployed installation.
 
 ### case-013
 
-- 直接回答：建议升级、检查 checkpoint 并测试恢复路径，有实际帮助；但未指出 PR #7498 和 1.1.7 修复版本，回到中断前重放也不保证绕过该缺陷。无工具记录可供核验。
-- ToyAgent：准确指出 #7498 和 1.1.7，并给出版本核对及回归测试方法。相关问题、手动 fork 的限制和后续回归均有工具记录支持；1.1.9 与 1.1.10 的说法也作了区分。
+- **Direct model:** Suggested upgrading, checking checkpoints, and testing recovery, but omitted PR #7498 and fix version 1.1.7. Replaying from before the interrupt does not necessarily bypass the defect. No tool record was available.
+- **ToyAgent:** Identified #7498 and 1.1.7 and suggested version and regression checks. Original records supported the related issue, manual-fork limitations, and subsequent regression; the answer also distinguished the 1.1.9 and 1.1.10 claims.
 
 ### case-014
 
-- 直接回答：提供了版本检查、复现和重放排查思路，但未指出 #6863 或 1.0.9 修复；复现建议偏重并发，而该缺陷也可在顺序异步任务中出现。无工具记录可核查其技术陈述。
-- ToyAgent：准确指出缺陷、修复版本和回归复现，并区分正常重放；工具记录中的 issue、PR、发布记录及文档支持主要结论和有条件的绕过建议。
+- **Direct model:** Suggested version checks, reproduction, and replay investigation, but omitted #6863 and its 1.0.9 fix. Its reproduction advice emphasized concurrency although the defect can occur with sequential asynchronous tasks. No tool record was available to verify the technical claims.
+- **ToyAgent:** Identified the defect and fix version, provided a regression reproduction, and distinguished normal replay. Original issue, PR, release, and documentation records supported the main conclusions and conditional workaround.
 
 ### case-015
 
-- 直接回答：提供了从图级流读取中断和恢复执行的可用绕行方法，但未指出这是已知的 tools 流误报及 #9406 修复，也未建议核对包含修复的版本。无工具记录可供核验。
-- ToyAgent：准确区分流事件误报与图实际暂停，给出升级、读取图级中断和恢复方法。记录中的 PR 与发布说明支持 #9406 及 1.2.19 版本结论，其他主要建议也有文档或搜索结果支持。
+- **Direct model:** Suggested a useful workaround using graph-level interrupt streams and resuming execution, but did not identify the known false report in the tools stream, fix #9406, or the need to check for a version containing it. No tool record was available.
+- **ToyAgent:** Distinguished a false stream event from an actual graph pause and described upgrading, reading graph-level interrupts, and resuming. The original PR and release notes supported #9406 and version 1.2.19; documentation or search results supported other principal advice.
 
 ### case-016
 
-- 直接回答：正确建议重命名业务参数并同步更新调用方和 schema，也说明了运行时对象的用途。没有工具记录，证据支持情况无法核验；未引用来源不影响正确性。
-- ToyAgent：准确指出保留名冲突并给出改名方案。记录中的 issue、文档和搜索结果支持主要说明；别名方案注明了版本限制及测试必要性，未作为默认修复。
+- **Direct model:** Correctly recommended renaming the business parameter and updating callers and the schema, and explained the purpose of the runtime object. No tool record was available to verify source support; missing citations did not affect correctness.
+- **ToyAgent:** Identified the reserved-name conflict and suggested renaming. The original issue, documentation, and search records supported the main explanation. The alias alternative included version and testing caveats and was not presented as the default fix.
 
 ### case-017
 
-- 直接回答：正确指出中断不应被吞掉，并给出恢复建议；但只修改用户包装器不足以修复 ToolNode 外层缺陷，遗漏已发布的修复和组件版本检查。无工具或证据记录可供核查。
-- ToyAgent：准确区分用户包装器与框架外层缺陷，指出修复版本、检查和升级组件，并提供临时方案及暂停恢复验证。工具记录支持主要结论；源码读取被截断，示例代码也未见实际运行记录。
+- **Direct model:** Correctly noted that interrupts should not be swallowed and gave recovery advice, but changing only the user wrapper would not fix the outer ToolNode defect. It omitted the released fix and component-version checks. No tool or evidence record was available.
+- **ToyAgent:** Distinguished the user wrapper from the framework-level defect, identified the fix version and component checks and upgrade, and provided temporary guidance and pause/resume validation. Original tool records supported the main conclusions; source output was truncated and the example was not observed running.
 
 ### case-018
 
-- 直接回答：提供了有用的提交、包版本和中断验证方法，但未指出对应修复 PR #9232 和 langgraph-prebuilt 1.1.1。回答主要是通用排查建议，无需外部证据。
-- ToyAgent：准确给出修复 PR、发布包及版本，并区分了另一类无效 resume 问题的版本要求。工具记录中的 issue、提交和发布说明支持关键结论；未明确建议对其他问题分别复现，但不影响核心解答。
+- **Direct model:** Provided useful commit, package-version, and interrupt checks, but did not identify fix PR #9232 or `langgraph-prebuilt` 1.1.1. The answer was principally general troubleshooting advice.
+- **ToyAgent:** Identified the fix PR, released package and version, and distinguished version requirements for a different invalid-resume issue. The original issue, commit, and release notes supported the key conclusions. It did not explicitly recommend separate reproduction for other issues, without affecting the core answer.
 
 ### case-019
 
-- 直接回答：提供了用实际序列化器逐字段定位非支持对象的有效方法，并要求代码和版本。未点名 langchain-azure-ai 或明确要求最小复现，但不影响对泛化问题的排查。无工具记录可供核验证据。
-- ToyAgent：覆盖了消息字段、其他状态、序列化器配置和版本排查，类型扫描也注明只是线索。未点名 langchain-azure-ai 或明确要求最小复现；无工具记录可供核验证据。
+- **Direct model:** Provided an effective way to locate unsupported objects field by field using the actual serializer, and requested code and versions. It did not name `langchain-azure-ai` or explicitly request a minimal reproduction, but adequately addressed the general problem. No tool record was available.
+- **ToyAgent:** Covered message fields, other state, serializer configuration, and versions, and qualified type scanning as a clue. It also did not name `langchain-azure-ai` or explicitly request a minimal reproduction. No tool record was available.
 
 ### case-020
 
-- 直接回答：提供了版本、环境和导入路径的有效排查步骤，但未指出已知的 checkpoint 路径冲突，也未给出具体兼容版本组合；TypeVar 建议仅适用于自定义泛型，不能替代此处的 V。无工具记录可供核查。
-- ToyAgent：准确说明路径冲突、历史修复组合及保留旧版时可验证的组合，并给出排查和安全注意事项。工具记录中的问题报告、源码、版本元数据和安全公告支持主要论断。
+- **Direct model:** Gave useful version, environment, and import-path checks, but did not identify the known checkpoint-path conflict or concrete compatible version combinations. Its TypeVar advice applies to custom generics and is not a substitute for `V` here. No tool record was available to verify support.
+- **ToyAgent:** Explained the path conflict, historical fix combinations, and combinations to verify when retaining older versions, with troubleshooting and security notes. Original issue reports, source, version metadata, and a security advisory supported the main claims.
 
-## 原始记录
+## Records
 
-- `blind-terra-20261111.jsonl`：答案、耗时、工具调用元数据和可用用量；已移除抓取的网页正文及工具参数。
-- `blind-terra-20261111-judgments.jsonl`：逐题模型评分及评分用量。
-- `public/cases.json`：测试问题；`private/reference.json`：独立评分参考。
+- `blind-terra-20261111.jsonl`: answers, durations, tool-call metadata, and available usage. Fetched page contents and tool arguments were removed from the public copy.
+- `blind-terra-20261111-judgments.jsonl`: per-case model judgments and grading usage.
+- `public/cases.json`: test questions; `private/reference.json`: the independent scoring references.

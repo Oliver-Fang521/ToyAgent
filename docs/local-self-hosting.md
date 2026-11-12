@@ -1,8 +1,8 @@
-# 在自己电脑运行 ToyAgent
+# Run ToyAgent on Your Computer
 
-单用户、本机 Docker 部署，无需 Sites 或 ChatGPT 登录。支持 macOS/Linux；Windows 使用 Docker Desktop 的 Linux containers，下面命令在 WSL2 中运行。需要 Git、运行中的 Docker Desktop/Engine 与 Docker Compose v2（支持 volume subpath；建议使用当前 Docker Desktop）。首次构建需要网络与可用磁盘空间。
+This is a single-user, local Docker deployment. It requires neither Sites nor ChatGPT sign-in. It supports macOS and Linux; on Windows, use Docker Desktop with Linux containers and run the commands below in WSL2. You need Git, a running Docker Desktop or Engine, and Docker Compose v2 with volume subpath support; a recent Docker Desktop is recommended. The first build requires internet access and available disk space.
 
-## 首次启动
+## First launch
 
 ```sh
 git clone https://github.com/Oliver-Fang521/ToyAgent.git
@@ -11,13 +11,13 @@ cp .env.local.example .env.local
 docker compose --env-file .env.local up -d --build --wait
 ```
 
-首次启动自动初始化本地密钥，无需设置密码。已有密钥和数据会保留；遇到不完整的秘密目录会拒绝覆盖，**不要为解决启动错误而删除秘密卷**。
+The first launch automatically initializes local secrets; no password is required. Existing secrets and data are preserved. Initialization refuses to overwrite an incomplete secrets directory. **Do not delete the secrets volume to resolve a startup error.**
 
-打开 **http://localhost:3000**，直接在设置中填写你自己的 OpenAI 或 DeepSeek Key，再选择模型。模型和搜索可能产生服务商费用。此安装不会提供作者的 Key、额度或数据。
+Open **http://localhost:3000**, enter your own OpenAI or DeepSeek API key in Settings, and select a model. Model and search calls may incur provider charges. This installation does not provide the author's API keys, credits, or data.
 
-如端口占用，在 `.env.local` 中修改 `TOYAGENT_PORT=3020` 后使用对应的 `http://localhost:3020`。请使用 `localhost`，不要换成 `127.0.0.1`：登录严格检查配置的 Host/Origin。只绑定宿主机 loopback，**不要改为公网监听、添加隧道或把它当作多人共享服务**。当前 HTTP Cookie 策略仅为本机设计。
+If the port is already in use, set `TOYAGENT_PORT=3020` in `.env.local` and use `http://localhost:3020`. Use `localhost`, not `127.0.0.1`: the application checks the configured Host and Origin. The service binds only to the host's loopback interface. **Do not expose it publicly, add a tunnel, or treat it as a shared multi-user service.**
 
-## 日志、停止和升级
+## Logs, stopping, and upgrades
 
 ```sh
 docker compose --env-file .env.local ps
@@ -26,13 +26,13 @@ docker compose --env-file .env.local restart
 docker compose --env-file .env.local down
 ```
 
-`down` 保留数据。**`down -v` 会删除密钥和聊天/记忆数据卷，不要用于日常停止或升级。** 退出网页账户不会删除数据。本机模式不设访问密码，任何能使用这台电脑及其本地浏览器的人都可能访问数据。
+`down` preserves data. **`down -v` deletes the secrets and chat/memory data volumes; do not use it for routine stops or upgrades.** Local mode has no access password, so anyone who can use this computer and access its local browser may be able to access the data.
 
-升级前先按下面流程停止并备份，再运行 `git pull` 和 `docker compose --env-file .env.local up -d --build --wait`。不保证任意历史版本可以直接降级或读取新版数据库。后端必须保持单实例。
+Before upgrading, stop and back up the installation using the procedure below, then run `git pull` and `docker compose --env-file .env.local up -d --build --wait`. Downgrading between arbitrary versions or reading a newer database with an older version is not guaranteed. Keep the backend to a single instance.
 
-## 一致性离线备份
+## Consistent offline backup
 
-等待所有任务结束，停止服务。备份包含聊天、附件、记忆、遗忘屏障及解密所需的秘密，**必须作为敏感文件保管**；不向他人发送，也不要加入 Git。以下命令创建新文件，不覆盖旧备份。
+Wait for all tasks to finish and stop the services. The backup contains chats, attachments, memories, forgetting barriers, and the secrets needed to decrypt them. **Treat it as sensitive:** do not share it or commit it to Git. These commands create a new archive without overwriting an existing one.
 
 ```sh
 docker compose --env-file .env.local stop frontend backend
@@ -41,11 +41,11 @@ docker compose --env-file .env.local --profile tools run --rm -T -v "$PWD/backup
 docker compose --env-file .env.local up -d --wait
 ```
 
-如已有 `toyagent.tar`，换新文件名。仅备份业务卷而不保留秘密卷会失去解密能力；丢失主密钥无法从访问密码恢复。
+If `toyagent.tar` already exists, choose a new filename. Backing up only the application data without the secrets volume will leave you unable to decrypt it. A lost master key cannot be recovered from an access password.
 
-## 恢复到全新实例
+## Restore to a new instance
 
-使用同版本代码与空卷，**先恢复，不要先执行 init**。下例使用新的 Compose project 名，避免覆盖原实例；恢复期间原实例保持停止。恢复工具拒绝非空目标，不合并旧聊天或重置遗忘屏障。
+Use the same code version and empty volumes. **Restore before starting the instance.** The example uses a new Compose project name to avoid overwriting the original instance; keep the original stopped during restoration. The restore tool refuses non-empty targets and does not merge old conversations or reset forgetting barriers.
 
 ```sh
 docker compose --env-file .env.local -p toyagent-restored --profile tools build init
@@ -53,23 +53,24 @@ docker compose --env-file .env.local -p toyagent-restored --profile tools run --
 docker compose --env-file .env.local -p toyagent-restored up -d --build --wait
 ```
 
-恢复会保留备份时的本地密钥。不要解压来源不可信的备份。
+Restoration preserves the local secrets from the backup. Do not extract backups from untrusted sources.
 
-## 故障排查与边界
+## Troubleshooting and scope
 
-- Docker 连接失败：先启动 Docker Desktop/Engine，确认 `docker info` 与 `docker compose version` 可用。
-- 提示 subpath 不存在或 local_configuration：先运行 init；已有数据则检查卷/配置或从完整备份恢复，不自动生成替代主密钥。
-- 无法登录/403：使用 `.env.local` 端口的 `http://localhost:端口`；不要从其他域名、代理或 iframe 访问。
-- 任务失败：网页诊断会指出阶段和工具；使用上方 logs 看服务日志，不分享任何 Key、秘密 JSON 或完整用户数据。
-- 模型不可用/余额不足：由自己的服务商账户权限和余额决定，不会借用作者或其他账户 Key。
-- DeepSeek Search 已支持；远程 Fetch 暂未挂载，网页读取保留现有安全读取器。Docker 不增加原本没有的工具能力。
+- **Docker connection failure:** Start Docker Desktop or Engine, then check `docker info` and `docker compose version`.
+- **Missing subpath or `local_configuration`:** Check initialization, volumes, and configuration. If data already exists, do not generate replacement master keys; inspect the volumes or restore a complete backup.
+- **403 or inaccessible page:** Use `http://localhost:<port>` with the port configured in `.env.local`; do not use another domain, proxy, or iframe.
+- **Task failure:** The interface reports the stage and tool when available. Inspect the service logs above; do not share API keys, secrets JSON, or complete user data.
+- **Model unavailable or insufficient balance:** Availability depends on your provider account's permissions and balance; the installation does not use the author's or another user's API key.
+- **DeepSeek Search:** Search is supported; remote Fetch is not mounted, and page reading uses the existing safe reader. Docker does not add tool capabilities that are absent from the application.
 
-这是本地单用户方案，不是生产多租户、高可用或公网安全认证。实际测试范围以日期对应的验证报告为准。
+This is a local single-user setup, not production multi-tenancy, high availability, or public-facing authentication. Refer to dated verification reports for the scope actually tested.
+
 ## Semantic memory maintenance
 
 Memory maintenance runs after a successful answer and can incur a separate model charge. Each job uses one bounded, tool-free call (6400 output tokens,30-second planner timeout); an explicitly confirmed retry allows at most one additional dispatch. Unknown outcomes after dispatch are marked uncertain and are not automatically replayed. Temporary credentials expire with their in-memory reference; restart never substitutes a saved Key for them.
 
-Use **My memory → About memory** for pending/failure status and maintenance usage. An invalid Key is corrected in provider settings before retry. Ordinary deletion does not disable future learning; permanent forgetting blocks the selected topic until explicitly restored. Old chat content is not automatically backfilled on upgrade.
+Correct an invalid key in provider settings before retrying. Ordinary deletion does not disable future learning; permanent forgetting blocks the selected topic until explicitly restored. Old chat content is not automatically backfilled on upgrade.
 
 Before upgrading an existing installation, stop both application services and make the documented offline backup of both secrets and data. Restore tests must use empty, separate volumes. Never remove existing volumes to apply a schema upgrade. The migration is additive and preserves old encrypted rows and tombstones.
 
