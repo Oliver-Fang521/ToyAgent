@@ -1,0 +1,122 @@
+[
+  {
+    "id": "case-001",
+    "question": "使用 interrupt_after 暂停后，checkpoints 和 debug 流没有显示保存的 checkpoint。应该如何排查？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-002",
+    "question": "Postgres checkpointer 写入时提示 thread_id 超长。我把很长的输入文本用作 thread_id，应该怎么处理？",
+    "split": "heldout",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-003",
+    "question": "StateGraph 节点里 await @task，使用 astream_events 时结果是 None，其他运行方式正常。如何诊断？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-004",
+    "question": "LangGraph 使用 durability=async 时一次 checkpoint 保存失败，后面恢复的状态丢失。版本 1.2.14，如何处理？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-005",
+    "question": "异步删除 checkpoint 时出现 coroutine was never awaited 的警告。需要检查什么？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-006",
+    "question": "AsyncShallowPostgresSaver 取消任务后可能覆盖较新的 checkpoint，如何处理？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-007",
+    "question": "SQLite checkpoint 对 thread_id 和 thread_ts 的元数据比较结果不符合预期，怎么排查？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-008",
+    "question": "用 PostgresSaver 连接 CockroachDB 出现 SQL 兼容错误，该怎么处理？",
+    "split": "heldout",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-009",
+    "question": "传给运行配置的 metadata 为什么出现在 StateSnapshot.metadata 中？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-010",
+    "question": "在 1.2.15 中，嵌套子图的并行节点中断后恢复时，已成功的兄弟节点又运行了一次。如何处理？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-011",
+    "question": "interrupt 后立即发送 resume，有时 headless 工具结果消失，怎么排查？",
+    "split": "heldout",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-012",
+    "question": "durability=exit 的 DeltaChannel 任务恢复后，加载的 writes 被重复保存。怎么处理？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-013",
+    "question": "旧版 LangGraph 的 time travel replay 不能正确恢复 interrupt，如何处理？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-014",
+    "question": "旧版 LangGraph Functional API 中，异步任务恢复 interrupt 后 resume 值被重复消费，如何诊断？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-015",
+    "question": "工具内部调用 interrupt 时，tools stream 显示 tool-error 而非结构化 interrupt，怎么办？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-016",
+    "question": "我的工具参数叫 runtime，ToolNode 传入了运行时对象而不是用户值，怎么处理？",
+    "split": "heldout",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-017",
+    "question": "异步工具包装器中 GraphInterrupt 被转成普通工具错误，图没有暂停，怎么处理？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-018",
+    "question": "工具调用 wrapper 吞掉 GraphBubbleUp，如何判断修复版本？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-019",
+    "question": "checkpoint 序列化 AIMessage 报 msgpack 类型不可序列化，怎么查？",
+    "split": "development",
+    "product": "LangGraph"
+  },
+  {
+    "id": "case-020",
+    "question": "langgraph 0.2.16 导入 langgraph.store.base.V 时 ImportError，如何排查？",
+    "split": "heldout",
+    "product": "LangGraph"
+  }
+]

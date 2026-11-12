@@ -1,0 +1,162 @@
+[
+  {
+    "id": "case-001",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/9180",
+    "expected": "检查版本；问题由 #9409 修复，确认运行版本是否包含修复，不要凭空指定发布版本。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-002",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/6239",
+    "expected": "改用较短的稳定 thread_id，例如 UUID 或哈希；确认映射和持久化隔离。",
+    "split": "heldout",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-003",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/9284",
+    "expected": "确认版本和流式运行路径；该问题由 #9407 修复，具体发布版本需核实。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-004",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/9245",
+    "expected": "这是历史版本缺陷，#9235 修复并在 langgraph 1.2.15 发布；核对升级后复现和持久化错误处理。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-005",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/4880",
+    "expected": "确认自定义 saver 的同步和异步方法，异步 adelete_thread 要 await；信息不足时索取调用代码和版本。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-006",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/8810",
+    "expected": "维护者指出该 saver 已弃用，建议评估 AsyncPostgresSaver 和 durability=exit，按业务验证持久化语义。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-007",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/5604",
+    "expected": "核对 langgraph 和 checkpoint-sqlite 的包版本兼容；thread_ts 相关支持已变更。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-008",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/8620",
+    "expected": "PostgresSaver 面向 PostgreSQL；使用 CockroachDB 专用的 langchain-cockroachdb checkpointer 并验证兼容。",
+    "split": "heldout",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-009",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/6460",
+    "expected": "运行配置中的 metadata 存入 checkpoint metadata，所以出现在 snapshot.metadata，属于预期行为。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-010",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/9276",
+    "expected": "已由 #9315 修复并在 langgraph 1.2.16 发布；升级并在隔离环境验证副作用幂等。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-011",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/9164",
+    "expected": "核对 Agent Server 版本；维护者称 0.17.0 接受完成暂停期间的 resume，并在暂停后应用。",
+    "split": "heldout",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-012",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/9183",
+    "expected": "该问题在 #9114 修复；需查询部署版本是否包含修复，不推断具体发布版本。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-013",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/7256",
+    "expected": "#7498 修复，langgraph 1.1.7 发布；核对版本并复现。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-014",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/6660",
+    "expected": "#6863 修复并在 langgraph 1.0.9 发布；检查版本并重跑最小复现。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-015",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/8218",
+    "expected": "#9406 修复该问题；核对包版本包含该修复，避免推断未确认的发布版本。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-016",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/8728",
+    "expected": "runtime 是保留参数名；给普通业务参数改名，例如 run_time。",
+    "split": "heldout",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-017",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/8217",
+    "expected": "#9232 修复，langgraph-prebuilt 1.1.1 发布；确认实际安装组件版本并验证中断。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-018",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/8394",
+    "expected": "wrap_tool_call 中断问题由 #9232 修复，langgraph-prebuilt 1.1.1 发布；其他问题需分别复现。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-019",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/4956",
+    "expected": "查看消息字段是否包含第三方 SDK 对象；该案例指向 langchain-azure-ai 集成，需提供最小复现和版本。",
+    "split": "development",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  },
+  {
+    "id": "case-020",
+    "source_url": "https://github.com/langchain-ai/langgraph/issues/1937",
+    "expected": "维护者说明 langgraph 0.2.32 和 checkpoint 2.0.0 解决版本兼容问题；保留旧版本时参考兼容版本约束并验证。",
+    "split": "heldout",
+    "adjudication": "manual",
+    "status": "reviewed_from_issue_discussion"
+  }
+]

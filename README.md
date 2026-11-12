@@ -53,6 +53,20 @@ ToyAgent separates the current conversation from persistent memory:
 
 There is no fixed account-wide limit on the number of saved memory entries, although disk space, individual retrieval operations, and model context remain bounded. Automatic extraction and organization may incur additional model charges. Memory is supporting context and is not guaranteed to be complete or always correct; current requests and external facts may require separate verification.
 
+## Evaluation
+
+I compared ToyAgent with a tool-free baseline on 20 historical LangGraph support questions. Both used GPT-6.1 Terra with medium reasoning. The baseline received only the question; ToyAgent could route, research, use tools, and verify its answer. Neither received the reference answers.
+
+| Result | Direct model | ToyAgent |
+| --- | ---: | ---: |
+| Correct | 4/20 | 18/20 |
+| Partially correct | 16/20 | 2/20 |
+| Execution failures | 0/20 | 0/20 |
+| Median time | 15.3 s | 112.9 s |
+| Recorded tokens | 19,251 | 1,908,994 |
+
+On these cases, ToyAgent's research workflow often found issue-specific details missed by direct answers, with substantially higher latency and token use. Scores were assigned by a separate call to the same model against historical issue-based references, not by an independent human panel; the small, selected sample and ambiguous questions limit generalization. [Full report and experiment files](benchmarks/langgraph-support/blind-terra-20261111-report.md).
+
 ## Run locally
 
 The repository includes a **single-user, local Docker demo**. No sign-in or access password is required. Each user configures their own provider API key.
@@ -84,27 +98,7 @@ The first launch generates local runtime secrets automatically. Once the service
 
 The local service binds to `localhost`. If port 3000 is in use, change `TOYAGENT_PORT` in `.env.local` and open `http://localhost:<port>`. Use `localhost`: the application checks the configured access address.
 
-### Everyday commands
-
-Run these commands from the project directory:
-
-```bash
-# Start an existing installation
-docker compose --env-file .env.local up -d --wait
-
-# Check service status or follow logs
-docker compose --env-file .env.local ps
-docker compose --env-file .env.local logs -f frontend backend
-
-# Stop while preserving data
-docker compose --env-file .env.local down
-```
-
-`down` preserves the data volumes. **Do not casually run `down -v`:** it removes the volumes containing conversations, memories, and secrets. For upgrades, backups, recovery, and troubleshooting, see the [local guide](docs/local-self-hosting.md).
-
-### Deployment boundary
-
-The local demo has no access password and is intended for your own computer. Someone with access to the computer or local service may be able to access its data. Do not expose this configuration directly to the public internet. A public multi-user deployment requires separate authentication, account isolation, security review, and operations work.
+This password-free demo is for local use; do not expose it directly to the public internet. For backups and troubleshooting, see the [local guide](docs/local-self-hosting.md).
 
 ## Project structure
 
@@ -125,14 +119,3 @@ ToyAgent/
 ```
 
 Some internal Python packages and historical evaluation files retain the name `gaia_agent` from an earlier stage of the project. The interactive agent is called **ToyAgent**.
-
-## Tests
-
-Install the Python development dependencies and run:
-
-```bash
-uv sync --frozen
-uv run pytest
-```
-
-Some integration tests require Docker or a local network port. Passing tests demonstrate the covered scenarios; they do not guarantee success for every model, external service, or user task. The repository also retains earlier evaluation code for research and regression testing; ToyAgent is not limited to a benchmark.
